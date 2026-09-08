@@ -3,8 +3,20 @@ import os
 import json
 from datetime import datetime, timezone
 
-DB_DIR = os.path.dirname(__file__)
-DB_PATH = os.path.join(DB_DIR, "leftover.db")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "leftover.db")
+configured_db_path = os.getenv("LEFTOVER_ACHIEVEMENTS_DB_PATH")
+if configured_db_path:
+    configured_db_path = os.path.expanduser(configured_db_path)
+    DB_PATH = (
+        configured_db_path
+        if os.path.isabs(configured_db_path)
+        else os.path.join(PROJECT_ROOT, configured_db_path)
+    )
+else:
+    DB_PATH = DEFAULT_DB_PATH
+DB_PATH = os.path.abspath(DB_PATH)
+DB_DIR = os.path.dirname(DB_PATH)
 
 
 def get_conn():

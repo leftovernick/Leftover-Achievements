@@ -11,11 +11,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
+
+load_dotenv()
+
 from database import database as db
 from services.retroachievements import RetroAchievements
 
-
-load_dotenv()
 
 app = FastAPI(title="LeftoverAchievements Display")
 app.mount("/static", StaticFiles(directory="static"), name="static")
