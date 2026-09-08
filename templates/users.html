@@ -4,17 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Users</title>
-    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=brand-2" />
   </head>
   <body class="web-dashboard admin-page">
     <header class="top-nav">
-      <a href="/" class="brand">LeftoverAchievements</a>
+      <a href="/" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" width="24" height="24" /><span>LeftoverAchievements</span></a>
       <nav aria-label="Main navigation">
+        <a href="/display" class="display-nav-link">Display</a>
         <a href="/">Dashboard</a>
-        <span class="disabled">Activity</span>
         <a href="/users" class="active">Users</a>
-        <span class="disabled">History</span>
-        <a href="/display">Display</a>
+        <a href="/history">History</a>
+        <a href="/charts">Charts</a>
         <a href="/admin">Settings</a>
       </nav>
     </header>
@@ -25,7 +26,6 @@
           <p class="eyebrow">RetroAchievements Accounts</p>
           <h1>Users</h1>
         </div>
-        <a href="/display" class="action-link">View Display</a>
       </section>
 
       {% if message %}

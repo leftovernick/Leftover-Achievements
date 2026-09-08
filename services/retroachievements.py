@@ -464,16 +464,19 @@ class RetroAchievements:
         achievements = await self.achievements_earned_between(username, start_time, end_time)
         hardcore_points = 0
         retro_points = 0
+        achievements_earned = 0
 
         for achievement in achievements:
             hardcore_mode = achievement.get("HardcoreMode", achievement.get("hardcoreMode"))
             if hardcore_mode in (1, "1", True):
                 hardcore_points += int(achievement.get("Points") or achievement.get("points") or 0)
                 retro_points += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
+                achievements_earned += 1
 
         return {
             "hardcore_points": hardcore_points,
             "retro_points": retro_points,
+            "achievements_earned": achievements_earned,
         }
 
     async def recent_hardcore_achievements(

@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements History</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=brand-2" />
+  </head>
+  <body class="web-dashboard history-page">
+    <header class="top-nav">
+      <a href="/" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" width="24" height="24" /><span>LeftoverAchievements</span></a>
+      <nav aria-label="Main navigation">
+        <a href="/display" class="display-nav-link">Display</a>
+        <a href="/">Dashboard</a>
+        <a href="/users">Users</a>
+        <a href="/history" class="active">History</a>
+        <a href="/charts">Charts</a>
+        <a href="/admin">Settings</a>
+      </nav>
+    </header>
+
+    <main class="dashboard-shell history-shell">
+      <section class="dashboard-hero panel">
+        <div>
+          <p class="eyebrow">Completed Weekly Snapshots</p>
+          <h1>History</h1>
+        </div>
+        <a href="/" class="action-link live-link"><span class="live-dot"></span>Current Week · Live</a>
+      </section>
+
+      {% if backfill_pending %}
+        <div class="message history-notice">Historical data is still filling in. Stored results are shown below; refresh shortly for the remaining users.</div>
+      {% endif %}
+
+      <div class="history-browser">
+        <aside class="panel week-selector-panel">
+          <div class="panel-header">
+            <h2>Completed Weeks</h2>
+            <span>Newest first</span>
+          </div>
+          <nav
+            class="week-selector"
+            aria-label="Historical week"
+            data-week-list
+            data-next-offset="{{ weeks_page_size }}"
+            data-selected-week="{{ selected_week_start or '' }}"
+          >
+            {% for item in weeks %}
+              <a href="/history?week={{ item.week_start }}"{% if item.week_start == selected_week_start %} class="active" aria-current="page"{% endif %}>{{ item.label }}</a>
+            {% else %}
+              <span class="empty">No completed weeks are available yet.</span>
+            {% endfor %}
+            <button type="button" class="week-load-more" data-week-sentinel{% if not has_more_weeks %} hidden{% endif %}>Load more weeks</button>
+            <span class="week-list-end" data-week-list-end{% if has_more_weeks %} hidden{% endif %}>End of history</span>
+          </nav>
+        </aside>
+
+        <div class="history-results">
+          <section class="history-summary" aria-label="Weekly summary">
+            <article class="panel summary-card">
+              <span>Hardcore Achievements</span>
+              <strong>{{ summary.achievements_display }}</strong>
+            </article>
+            <article class="panel summary-card">
+              <span>Hardcore Points</span>
+              <strong class="weekly-hardcore-points">+{{ summary.hardcore_points_display }}</strong>
+            </article>
+            <article class="panel summary-card">
+              <span>RetroPoints</span>
+              <strong>+{{ summary.retro_points_display }}</strong>
+            </article>
+            <article class="panel summary-card summary-card-muted">
+              <span>Games Beaten / Mastered</span>
+              <strong>— / —</strong>
+              <small>Not reliably reconstructable</small>
+            </article>
+          </section>
+
+          <section class="panel history-rankings-panel">
+            <div class="panel-header">
+              <h2>Weekly Rankings</h2>
+              <span>{{ selected_week_label }}</span>
+            </div>
+            <div class="table-scroll">
+              <table class="leaderboard compact-table history-table">
+                <thead>
+                  <tr><th>Rank</th><th>Player</th><th>HC Points</th><th>RetroPoints</th><th>HC Achievements</th></tr>
+                </thead>
+                <tbody>
+                {% for u in rankings %}
+                  <tr>
+                    <td class="rank">{{ loop.index }}</td>
+                    <td class="player-cell">
+                      <div class="player">
+                        {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.canonical_username }} avatar" class="avatar small-avatar" />{% endif %}
+                        <span class="username">{{ u.canonical_username }}</span>
+                      </div>
+                    </td>
+                    <td class="points weekly-hardcore-points">+{{ u.hardcore_points_display }}</td>
+                    <td class="points weekly-retro-points retro-points">(+{{ u.retro_points_display }})</td>
+                    <td class="achievement-count">{{ u.achievements_earned }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="empty">No players earned Hardcore Points this week.</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <p class="history-limitation">Historical beaten and mastery totals are left unavailable because the official date-range achievement API does not expose when those game-award transitions occurred. The page does not estimate them from unlocks.</p>
+        </div>
+      </div>
+    </main>
+    <script src="/static/js/history.js"></script>
+  </body>
+</html>

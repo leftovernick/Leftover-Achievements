@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements Charts</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=charts-1" />
+  </head>
+  <body class="web-dashboard charts-page">
+    <header class="top-nav">
+      <a href="/" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" width="24" height="24" /><span>LeftoverAchievements</span></a>
+      <nav aria-label="Main navigation">
+        <a href="/display" class="display-nav-link">Display</a>
+        <a href="/">Dashboard</a>
+        <a href="/users">Users</a>
+        <a href="/history">History</a>
+        <a href="/charts" class="active">Charts</a>
+        <a href="/admin">Settings</a>
+      </nav>
+    </header>
+
+    <main class="dashboard-shell charts-shell">
+      <section class="dashboard-hero panel charts-hero">
+        <div>
+          <p class="eyebrow">Completed Weekly Snapshots</p>
+          <h1>Charts</h1>
+        </div>
+        <fieldset class="chart-range" aria-label="Chart range">
+          <legend>Range</legend>
+          <div>
+            {% for range in [4, 8, 12] %}
+              <button type="button" data-chart-range="{{ range }}"{% if range == 8 %} class="active" aria-pressed="true"{% else %} aria-pressed="false"{% endif %}>{{ range }} weeks</button>
+            {% endfor %}
+          </div>
+        </fieldset>
+      </section>
+
+      <div class="message chart-error" data-chart-error hidden>Chart history could not be loaded. Try refreshing the page.</div>
+      <section class="panel chart-empty" data-chart-empty hidden>
+        <strong>No completed weekly history yet.</strong>
+        <span>Charts will appear after the first completed-week snapshot is stored.</span>
+      </section>
+
+      <div class="chart-grid" data-chart-grid aria-live="polite">
+        <section class="panel chart-panel">
+          <div class="panel-header">
+            <h2>Weekly Hardcore Points Trend</h2>
+            <span data-chart-coverage>Loading…</span>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="hardcore-points-chart"></canvas></div>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-header">
+            <h2>Weekly RetroPoints Trend</h2>
+            <span data-chart-coverage>Loading…</span>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="retro-points-chart"></canvas></div>
+        </section>
+
+        <section class="panel chart-panel chart-panel-wide">
+          <div class="panel-header">
+            <h2>Weekly Rank History</h2>
+            <span>Rank 1 at top</span>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="rank-history-chart"></canvas></div>
+        </section>
+      </div>
+    </main>
+    <script src="/static/vendor/chart.umd.min.js"></script>
+    <script src="/static/js/charts.js?v={{ chart_js_version }}"></script>
+  </body>
+</html>

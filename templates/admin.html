@@ -4,17 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Settings</title>
-    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=api-key-2" />
   </head>
   <body class="web-dashboard admin-page">
     <header class="top-nav">
-      <a href="/" class="brand">LeftoverAchievements</a>
+      <a href="/" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" width="24" height="24" /><span>LeftoverAchievements</span></a>
       <nav aria-label="Main navigation">
+        <a href="/display" class="display-nav-link">Display</a>
         <a href="/">Dashboard</a>
-        <span class="disabled">Activity</span>
         <a href="/users">Users</a>
-        <span class="disabled">History</span>
-        <a href="/display">Display</a>
+        <a href="/history">History</a>
+        <a href="/charts">Charts</a>
         <a href="/admin" class="active">Settings</a>
       </nav>
     </header>
@@ -25,12 +26,45 @@
           <p class="eyebrow">Configuration</p>
           <h1>Display Settings</h1>
         </div>
-        <a href="/display" class="action-link">View Display</a>
       </section>
 
       {% if message %}
         <div class="message">{{ message }}</div>
       {% endif %}
+
+      <section class="panel api-key-panel">
+        <div class="panel-header">
+          <h2>RetroAchievements API</h2>
+          <span>
+            {% if ra_api_key_source == 'settings' %}Key saved in Settings
+            {% elif ra_api_key_source == 'environment' %}Using legacy .env key
+            {% else %}API key required
+            {% endif %}
+          </span>
+        </div>
+        <form method="post" action="/admin/api-key" class="api-key-form">
+          <label for="ra-api-key">
+            <span>Web API key</span>
+            <small>The saved key is stored locally in SQLite and is never displayed again.</small>
+          </label>
+          <div class="api-key-entry">
+            <input
+              id="ra-api-key"
+              type="text"
+              name="api_key"
+              placeholder="Paste a new RetroAchievements API key"
+              autocomplete="off"
+              autocapitalize="none"
+              data-1p-ignore
+              data-lpignore="true"
+              spellcheck="false"
+              class="masked-api-key"
+              required
+            />
+            <button type="submit">Save API Key</button>
+          </div>
+        </form>
+      </section>
 
       <section class="panel display-settings">
         <div class="panel-header">
@@ -96,6 +130,38 @@
         </form>
       </section>
 
+      <section class="panel history-maintenance-panel">
+        <div class="panel-header">
+          <h2>History Data</h2>
+          <span>RetroAchievements API</span>
+        </div>
+        <div class="history-maintenance" data-history-maintenance>
+          <div class="history-maintenance-copy">
+            <p>Audit every stored completed week, restore gaps caused by downtime, add current users to older snapshots, and refresh the current LIVE week. Existing completed rows are skipped.</p>
+            <div class="history-maintenance-actions">
+              <button type="button" data-history-check>Check &amp; Fill Missing Data</button>
+              <a href="/history">View History</a>
+            </div>
+          </div>
+          <div class="history-progress" aria-live="polite">
+            <progress max="100" value="0" data-history-progress>0%</progress>
+            <div class="history-progress-heading">
+              <strong data-history-status>Checking status…</strong>
+              <span data-history-percent>0%</span>
+            </div>
+            <p data-history-current></p>
+            <dl class="history-progress-stats">
+              <div><dt>Checked</dt><dd data-history-checked>0</dd></div>
+              <div><dt>Already stored</dt><dd data-history-existing>0</dd></div>
+              <div><dt>Missing</dt><dd data-history-missing>0</dd></div>
+              <div><dt>Fetched</dt><dd data-history-fetched>0</dd></div>
+              <div><dt>Live refreshed</dt><dd data-history-live>0</dd></div>
+              <div><dt>Failed</dt><dd data-history-failed>0</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
       <section class="panel display-settings">
         <div class="panel-header">
           <h2>Test Display Alerts</h2>
@@ -109,6 +175,7 @@
       </section>
 
     </main>
+    <script src="/static/js/admin-history.js"></script>
     <script>
       document.querySelectorAll('[data-duration-slider]').forEach((slider) => {
         const output = document.querySelector(`[data-duration-output="${slider.dataset.durationSlider}"]`);

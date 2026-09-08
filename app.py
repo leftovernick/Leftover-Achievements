@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -23,13 +24,29 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 db.init_db()
-ra_client = RetroAchievements(api_key=os.getenv("RA_API_KEY"))
+ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or os.getenv("RA_API_KEY"))
 RECENT_ACTIVITY_LIMIT = 5
 RECENT_ACTIVITY_FETCH_MINUTES = 43200
 WEEKLY_CACHE_TTL = timedelta(minutes=10)
 PROFILE_CACHE_TTL = timedelta(minutes=5)
 CURRENTLY_PLAYING_CACHE_TTL = timedelta(seconds=75)
 weekly_refresh_task = None
+history_backfill_task = None
+history_refresh_live_requested = False
+history_backfill_status = {
+    "state": "idle",
+    "total_checks": 0,
+    "existing": 0,
+    "missing": 0,
+    "processed": 0,
+    "fetched": 0,
+    "failed": 0,
+    "live_users": 0,
+    "live_processed": 0,
+    "live_failed": 0,
+    "current": None,
+    "message": "History data has not been checked in this server session.",
+}
 user_snapshot_refresh_task = None
 recent_activity_refresh_task = None
 achievement_poll_task = None
@@ -64,6 +81,11 @@ TEST_ACHIEVEMENT_DESCRIPTION = "Obtain the sword."
 TEST_ACHIEVEMENT_BADGE = "https://retroachievements.org/Badge/62752.png"
 TEST_USERNAME = "leftovernick"
 TEST_USER_AVATAR = "https://retroachievements.org/UserPic/leftovernick.png"
+HISTORY_WEEK_COUNT = 4
+HISTORY_WEEKS_PAGE_SIZE = 5
+HISTORY_PAGE_WAIT_SECONDS = 20
+CHART_WEEK_RANGES = (4, 8, 12)
+logger = logging.getLogger(__name__)
 
 
 def admin_redirect(message: str) -> RedirectResponse:
@@ -72,6 +94,14 @@ def admin_redirect(message: str) -> RedirectResponse:
 
 def users_redirect(message: str) -> RedirectResponse:
     return RedirectResponse(url=f"/users?{urlencode({'message': message})}", status_code=303)
+
+
+def ra_api_key_source() -> str | None:
+    if db.get_setting("ra_api_key"):
+        return "settings"
+    if os.getenv("RA_API_KEY"):
+        return "environment"
+    return None
 
 
 def current_week_range() -> tuple[datetime, datetime]:
@@ -83,6 +113,268 @@ def current_week_range() -> tuple[datetime, datetime]:
         microsecond=0,
     )
     return week_start, now
+
+
+def previous_completed_week_ranges(count: int = HISTORY_WEEK_COUNT) -> list[tuple[datetime, datetime]]:
+    """Return completed local-time Monday-through-Sunday ranges, newest first."""
+    current_start, _ = current_week_range()
+    ranges = []
+    for weeks_ago in range(1, count + 1):
+        start = current_start - timedelta(weeks=weeks_ago)
+        end = start + timedelta(days=7) - timedelta(microseconds=1)
+        ranges.append((start, end))
+    return ranges
+
+
+def completed_history_ranges() -> list[tuple[datetime, datetime]]:
+    """Return every completed week to audit, retaining a four-week floor for a new database."""
+    current_start, _ = current_week_range()
+    stored_weeks = db.get_history_weeks()
+    if not stored_weeks:
+        return previous_completed_week_ranges()
+
+    oldest_stored = min(datetime.fromisoformat(week["week_start"]).date() for week in stored_weeks)
+    oldest_start = current_start.replace(
+        year=oldest_stored.year,
+        month=oldest_stored.month,
+        day=oldest_stored.day,
+    )
+    four_week_floor = current_start - timedelta(weeks=HISTORY_WEEK_COUNT)
+    audit_start = min(oldest_start, four_week_floor)
+    ranges = []
+    start = current_start - timedelta(weeks=1)
+    while start >= audit_start:
+        ranges.append((start, start + timedelta(days=7) - timedelta(microseconds=1)))
+        start -= timedelta(weeks=1)
+    return ranges
+
+
+def history_user_key(user: dict) -> str:
+    ulid = user.get("ra_ulid")
+    if ulid:
+        return f"ulid:{ulid.lower()}"
+    return f"username:{user['ra_username'].lower()}"
+
+
+def readable_week_range(week_start: str, week_end: str) -> str:
+    start = datetime.fromisoformat(week_start)
+    end = datetime.fromisoformat(week_end)
+    if start.year != end.year:
+        return f"{start.strftime('%b')} {start.day}, {start.year}\u2013{end.strftime('%b')} {end.day}, {end.year}"
+    if start.month == end.month:
+        return f"{start.strftime('%b')} {start.day}\u2013{end.day}, {end.year}"
+    return f"{start.strftime('%b')} {start.day}\u2013{end.strftime('%b')} {end.day}, {end.year}"
+
+
+async def backfill_history_user(user: dict, ranges: list[tuple[datetime, datetime]], profile_cache: dict):
+    """Fill only this tracked user's missing rows; existing snapshots stay immutable."""
+    user_key = history_user_key(user)
+    if not ranges:
+        return
+
+    username = user["ra_username"]
+    profile = profile_cache.get(username.lower(), {})
+    if not profile:
+        try:
+            profile = await ra_client.lookup_user(user.get("ra_ulid") or username)
+            db.save_user_profile(username, profile)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning("Could not refresh RetroAchievements profile for history user %s: %s", username, exc)
+            profile = {}
+
+    for start, end in ranges:
+        history_backfill_status["current"] = f"{username} · {readable_week_range(start.date().isoformat(), end.date().isoformat())}"
+        try:
+            stats = await ra_client.points_earned_between(user.get("ra_ulid") or username, start, end)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning(
+                "Could not backfill history for %s during %s through %s: %s",
+                username,
+                start.date(),
+                end.date(),
+                exc,
+            )
+            history_backfill_status["failed"] += 1
+            history_backfill_status["processed"] += 1
+            continue
+
+        db.save_history_ranking(
+            start.date().isoformat(),
+            {
+                "user_key": user_key,
+                "ra_username": username,
+                "canonical_username": profile.get("username") or username,
+                "ra_ulid": profile.get("ulid") or user.get("ra_ulid"),
+                "avatar": profile.get("avatar"),
+                "hardcore_points": stats.get("hardcore_points", 0),
+                "retro_points": stats.get("retro_points", 0),
+                "achievements_earned": stats.get("achievements_earned", 0),
+                # The official range API exposes unlocks, not historical award transitions.
+                "beaten_count": None,
+                "mastery_count": None,
+            },
+        )
+        history_backfill_status["fetched"] += 1
+        history_backfill_status["processed"] += 1
+
+
+async def ensure_history_backfill():
+    """Ensure four completed week containers and all currently tracked user rows exist."""
+    global history_refresh_live_requested
+    started_at = datetime.now(timezone.utc).isoformat()
+    history_backfill_status.update(
+        {
+            "state": "scanning",
+            "total_checks": 0,
+            "existing": 0,
+            "missing": 0,
+            "processed": 0,
+            "fetched": 0,
+            "failed": 0,
+            "live_users": 0,
+            "live_processed": 0,
+            "live_failed": 0,
+            "current": None,
+            "message": "Checking stored history for missing user/week rows…",
+            "started_at": started_at,
+            "finished_at": None,
+        }
+    )
+    ranges = completed_history_ranges()
+    for start, end in ranges:
+        db.ensure_history_week(start.date().isoformat(), end.date().isoformat())
+
+    users = db.get_tracked_users()
+    history_backfill_status["total_checks"] = len(users) * len(ranges)
+    history_backfill_status["live_users"] = len(users) if history_refresh_live_requested else 0
+    if not users:
+        history_backfill_status.update(
+            {
+                "state": "complete",
+                "message": "No tracked users to check.",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        history_refresh_live_requested = False
+        return
+
+    profile_cache = db.get_user_profiles()
+    missing_by_user = []
+    for user in users:
+        user_key = history_user_key(user)
+        missing_ranges = [
+            (start, end)
+            for start, end in ranges
+            if not db.history_user_exists(start.date().isoformat(), user_key)
+        ]
+        missing_by_user.append((user, missing_ranges))
+
+    missing_count = sum(len(missing_ranges) for _, missing_ranges in missing_by_user)
+    history_backfill_status["missing"] = missing_count
+    history_backfill_status["existing"] = history_backfill_status["total_checks"] - missing_count
+    if not missing_count and not history_refresh_live_requested:
+        history_backfill_status.update(
+            {
+                "state": "complete",
+                "message": f"History is complete. Checked {history_backfill_status['total_checks']} user/week rows; no API requests were needed.",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        return
+
+    if missing_count:
+        history_backfill_status.update(
+            {
+                "state": "running",
+                "message": f"Found {missing_count} missing completed user/week rows. Fetching from RetroAchievements…",
+            }
+        )
+        # Two workers keeps bulk history reasonably quick while the RA client rate-limits starts.
+        semaphore = asyncio.Semaphore(2)
+
+        async def limited_backfill(user, missing_ranges):
+            async with semaphore:
+                await backfill_history_user(user, missing_ranges, profile_cache)
+
+        await asyncio.gather(
+            *(limited_backfill(user, missing_ranges) for user, missing_ranges in missing_by_user if missing_ranges)
+        )
+
+    if history_refresh_live_requested:
+        week_start, week_end = current_week_range()
+        history_backfill_status.update(
+            {
+                "state": "running",
+                "message": "Completed-week gaps checked. Refreshing the current live week…",
+            }
+        )
+        for user in users:
+            username = user["ra_username"]
+            history_backfill_status["current"] = f"{username} · Current week (LIVE)"
+            try:
+                stats = await ra_client.points_earned_between(user.get("ra_ulid") or username, week_start, week_end)
+                db.save_weekly_ranking(
+                    username,
+                    stats.get("hardcore_points", 0),
+                    stats.get("retro_points", 0),
+                    week_start.isoformat(),
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                history_backfill_status["live_failed"] += 1
+                logger.warning("Could not refresh current weekly data for %s: %s", username, exc)
+            finally:
+                history_backfill_status["live_processed"] += 1
+
+    failed = history_backfill_status["failed"] + history_backfill_status["live_failed"]
+    added = history_backfill_status["fetched"]
+    live_refreshed = history_backfill_status["live_processed"] - history_backfill_status["live_failed"]
+    if failed:
+        completion_message = f"Finished with {failed} failed request{'s' if failed != 1 else ''}. Run the check again to retry."
+    elif history_backfill_status["live_users"]:
+        completion_message = f"History is complete. Added {added} completed rows and refreshed {live_refreshed} live user{'s' if live_refreshed != 1 else ''}."
+    else:
+        completion_message = f"History is complete. Added {added} missing completed user/week rows."
+    history_backfill_status.update(
+        {
+            "state": "complete_with_errors" if failed else "complete",
+            "current": None,
+            "message": completion_message,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    history_refresh_live_requested = False
+
+
+def schedule_history_backfill(refresh_live: bool = False) -> asyncio.Task:
+    global history_backfill_task, history_refresh_live_requested
+    if refresh_live:
+        history_refresh_live_requested = True
+    if history_backfill_task is None or history_backfill_task.done():
+        history_backfill_status.update(
+            {
+                "state": "queued",
+                "current": None,
+                "message": "History check queued…",
+            }
+        )
+        history_backfill_task = asyncio.create_task(ensure_history_backfill())
+    return history_backfill_task
+
+
+def history_backfill_status_payload() -> dict:
+    payload = dict(history_backfill_status)
+    payload["live_refreshed"] = payload.get("live_processed", 0) - payload.get("live_failed", 0)
+    total_work = payload.get("missing", 0) + payload.get("live_users", 0)
+    processed = payload.get("processed", 0) + payload.get("live_processed", 0)
+    if payload.get("state") == "scanning":
+        payload["percent"] = 0
+    elif total_work:
+        payload["percent"] = min(100, round((processed / total_work) * 100))
+    elif payload.get("state") in {"complete", "complete_with_errors"}:
+        payload["percent"] = 100
+    else:
+        payload["percent"] = 0
+    return payload
 
 
 def format_points(value: int) -> str:
@@ -606,6 +898,124 @@ async def dashboard(request: Request):
     )
 
 
+@app.get("/history")
+async def history(request: Request, week: str | None = None):
+    backfill_pending = False
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(schedule_history_backfill()),
+            timeout=HISTORY_PAGE_WAIT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        backfill_pending = True
+    except Exception as exc:
+        logger.exception("Historical backfill failed: %s", exc)
+
+    weeks = db.get_history_weeks(limit=HISTORY_WEEKS_PAGE_SIZE)
+    selected_week = db.get_history_week(week) if week else (weeks[0] if weeks else None)
+    if not selected_week and weeks:
+        selected_week = weeks[0]
+    selected_start = selected_week["week_start"] if selected_week else None
+    all_rankings = db.get_history_rankings(selected_start) if selected_start else []
+    rankings = [ranking for ranking in all_rankings if ranking["hardcore_points"] > 0]
+
+    for ranking in rankings:
+        ranking["hardcore_points_display"] = format_points(ranking["hardcore_points"])
+        ranking["retro_points_display"] = format_points(ranking["retro_points"])
+
+    week_options = [
+        {**item, "label": readable_week_range(item["week_start"], item["week_end"])}
+        for item in weeks
+    ]
+    summary = {
+        "achievements": sum(item["achievements_earned"] for item in all_rankings),
+        "hardcore_points": sum(item["hardcore_points"] for item in all_rankings),
+        "retro_points": sum(item["retro_points"] for item in all_rankings),
+        "beaten": None,
+        "masteries": None,
+    }
+    summary["achievements_display"] = format_points(summary["achievements"])
+    summary["hardcore_points_display"] = format_points(summary["hardcore_points"])
+    summary["retro_points_display"] = format_points(summary["retro_points"])
+
+    return templates.TemplateResponse(
+        request=request,
+        name="history.html",
+        context={
+            "weeks": week_options,
+            "weeks_page_size": HISTORY_WEEKS_PAGE_SIZE,
+            "has_more_weeks": db.history_week_count() > len(weeks),
+            "selected_week_start": selected_start,
+            "selected_week_label": (
+                readable_week_range(selected_week["week_start"], selected_week["week_end"])
+                if selected_week
+                else "No completed weeks"
+            ),
+            "rankings": rankings,
+            "summary": summary,
+            "backfill_pending": backfill_pending,
+        },
+    )
+
+
+@app.get("/history/weeks")
+async def history_weeks(offset: int = 0):
+    offset = max(offset, 0)
+    weeks = db.get_history_weeks(limit=HISTORY_WEEKS_PAGE_SIZE, offset=offset)
+    total = db.history_week_count()
+    return {
+        "items": [
+            {
+                "week_start": item["week_start"],
+                "label": readable_week_range(item["week_start"], item["week_end"]),
+            }
+            for item in weeks
+        ],
+        "has_more": offset + len(weeks) < total,
+    }
+
+
+@app.get("/charts")
+async def charts(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="charts.html",
+        context={
+            "chart_js_version": static_asset_version(os.path.join("static", "js", "charts.js")),
+        },
+    )
+
+
+@app.get("/api/charts/weekly")
+async def weekly_chart_data(weeks: int = 8):
+    selected_range = weeks if weeks in CHART_WEEK_RANGES else 8
+    history = db.get_weekly_chart_history(selected_range)
+    return {
+        "range_weeks": selected_range,
+        "available_weeks": db.history_week_count(),
+        "weeks": [
+            {
+                "week_start": week["week_start"],
+                "week_end": week["week_end"],
+                "label": readable_week_range(week["week_start"], week["week_end"]),
+                "users": [
+                    {
+                        "user_key": ranking["user_key"],
+                        "canonical_username": ranking["canonical_username"],
+                        "ra_username": ranking["ra_username"],
+                        "ra_ulid": ranking["ra_ulid"],
+                        "hardcore_points": ranking["hardcore_points"],
+                        "retro_points": ranking["retro_points"],
+                        "rank": ranking["rank"],
+                    }
+                    for ranking in week["rankings"]
+                ],
+            }
+            for week in history
+        ],
+    }
+
+
 @app.get("/display")
 async def display(request: Request):
     context = await dashboard_context()
@@ -642,6 +1052,7 @@ async def display_events(request: Request):
 @app.on_event("startup")
 async def start_background_polling():
     global achievement_poll_task
+    schedule_history_backfill()
     if achievement_poll_task and not achievement_poll_task.done():
         return
     achievement_poll_task = asyncio.create_task(achievement_poll_loop())
@@ -732,6 +1143,7 @@ async def admin(request: Request, message: str = None):
             "audio_sources": configured_audio_sources(),
             "notification_durations": notification_durations(),
             "display_section_durations": display_section_durations(),
+            "ra_api_key_source": ra_api_key_source(),
         },
     )
 
@@ -743,6 +1155,17 @@ async def users(request: Request, message: str = None):
         name="users.html",
         context={"users": db.get_tracked_users(), "message": message},
     )
+
+
+@app.post("/admin/history-backfill")
+async def start_history_backfill():
+    schedule_history_backfill(refresh_live=True)
+    return history_backfill_status_payload()
+
+
+@app.get("/admin/history-backfill/status")
+async def get_history_backfill_status():
+    return history_backfill_status_payload()
 
 
 @app.post("/admin/add")
@@ -764,6 +1187,17 @@ async def add_user(request: Request, username: str = Form(...)):
 
     db.add_tracked_user(canonical, ulid)
     return users_redirect(f"Added {canonical}.")
+
+
+@app.post("/admin/api-key")
+async def update_ra_api_key(api_key: str = Form(...)):
+    api_key = api_key.strip()
+    if not api_key:
+        return admin_redirect("RetroAchievements API key was not changed: enter a key first.")
+
+    db.set_setting("ra_api_key", api_key)
+    ra_client.api_key = api_key
+    return admin_redirect("RetroAchievements API key saved. The new key is active immediately.")
 
 
 @app.post("/admin/settings")

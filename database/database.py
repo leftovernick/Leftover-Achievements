@@ -73,6 +73,41 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS weekly_history_weeks (
+            week_start TEXT PRIMARY KEY,
+            week_end TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_history_rankings (
+            week_start TEXT NOT NULL,
+            user_key TEXT NOT NULL COLLATE NOCASE,
+            ra_username TEXT NOT NULL,
+            canonical_username TEXT NOT NULL,
+            ra_ulid TEXT,
+            avatar TEXT,
+            hardcore_points INTEGER NOT NULL DEFAULT 0,
+            retro_points INTEGER NOT NULL DEFAULT 0,
+            achievements_earned INTEGER NOT NULL DEFAULT 0,
+            beaten_count INTEGER,
+            mastery_count INTEGER,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (week_start, user_key),
+            FOREIGN KEY (week_start) REFERENCES weekly_history_weeks(week_start)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_weekly_history_rankings_week
+        ON weekly_history_rankings (week_start)
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS user_profiles (
             ra_username TEXT PRIMARY KEY COLLATE NOCASE,
             canonical_username TEXT NOT NULL,
@@ -438,6 +473,180 @@ def save_weekly_rankings(rankings: list[dict], week_start: str):
             ],
         )
         conn.commit()
+
+
+def ensure_history_week(week_start: str, week_end: str):
+    """Create a completed-week container without replacing an existing snapshot."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO weekly_history_weeks (week_start, week_end, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (week_start, week_end, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def get_history_weeks(limit: int | None = None, offset: int = 0):
+    with get_conn() as conn:
+        query = """
+            SELECT week_start, week_end, created_at
+            FROM weekly_history_weeks
+            ORDER BY week_start DESC
+        """
+        params = []
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params.extend((limit, offset))
+        rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_history_week(week_start: str):
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT week_start, week_end, created_at
+            FROM weekly_history_weeks
+            WHERE week_start = ?
+            """,
+            (week_start,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def history_week_count() -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) AS count FROM weekly_history_weeks").fetchone()
+        return row["count"]
+
+
+def history_user_exists(week_start: str, user_key: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM weekly_history_rankings
+            WHERE week_start = ? AND user_key = ?
+            """,
+            (week_start, user_key),
+        ).fetchone()
+        return row is not None
+
+
+def save_history_ranking(week_start: str, ranking: dict):
+    """Insert one immutable user/week snapshot, ignoring an existing row."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO weekly_history_rankings (
+                week_start,
+                user_key,
+                ra_username,
+                canonical_username,
+                ra_ulid,
+                avatar,
+                hardcore_points,
+                retro_points,
+                achievements_earned,
+                beaten_count,
+                mastery_count,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                week_start,
+                ranking["user_key"],
+                ranking["ra_username"],
+                ranking.get("canonical_username") or ranking["ra_username"],
+                ranking.get("ra_ulid"),
+                ranking.get("avatar"),
+                ranking.get("hardcore_points", 0),
+                ranking.get("retro_points", 0),
+                ranking.get("achievements_earned", 0),
+                ranking.get("beaten_count"),
+                ranking.get("mastery_count"),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def get_history_rankings(week_start: str):
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                week_start,
+                user_key,
+                ra_username,
+                canonical_username,
+                ra_ulid,
+                avatar,
+                hardcore_points,
+                retro_points,
+                achievements_earned,
+                beaten_count,
+                mastery_count,
+                created_at
+            FROM weekly_history_rankings
+            WHERE week_start = ?
+            ORDER BY hardcore_points DESC, canonical_username COLLATE NOCASE ASC
+            """,
+            (week_start,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_weekly_chart_history(limit: int = 8):
+    """Return recent completed weeks and their stored rankings, oldest first."""
+    limit = max(1, int(limit))
+    with get_conn() as conn:
+        week_rows = conn.execute(
+            """
+            SELECT week_start, week_end
+            FROM weekly_history_weeks
+            ORDER BY week_start DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        weeks = [dict(row) for row in reversed(week_rows)]
+        if not weeks:
+            return []
+
+        placeholders = ", ".join("?" for _ in weeks)
+        ranking_rows = conn.execute(
+            f"""
+            SELECT
+                week_start,
+                user_key,
+                ra_username,
+                canonical_username,
+                ra_ulid,
+                hardcore_points,
+                retro_points
+            FROM weekly_history_rankings
+            WHERE week_start IN ({placeholders})
+            ORDER BY
+                week_start ASC,
+                hardcore_points DESC,
+                canonical_username COLLATE NOCASE ASC
+            """,
+            [week["week_start"] for week in weeks],
+        ).fetchall()
+
+    rankings_by_week = {week["week_start"]: [] for week in weeks}
+    for row in ranking_rows:
+        ranking = dict(row)
+        weekly_rankings = rankings_by_week[ranking["week_start"]]
+        ranked_count = sum(item["rank"] is not None for item in weekly_rankings)
+        ranking["rank"] = ranked_count + 1 if ranking["hardcore_points"] > 0 else None
+        weekly_rankings.append(ranking)
+
+    for week in weeks:
+        week["rankings"] = rankings_by_week[week["week_start"]]
+    return weeks
 
 
 

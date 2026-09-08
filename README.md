@@ -25,13 +25,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Copy the example env and set your RetroAchievements API key:
+3. Copy the example environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env` and set `RA_API_KEY` to your RetroAchievements web API key.
+After starting the app, open Settings and save your RetroAchievements web API key in
+the **RetroAchievements API** panel. The key is stored locally in SQLite and becomes
+active immediately. `RA_API_KEY` in `.env` remains supported as an optional fallback.
 
 4. Run the FastAPI app:
 
@@ -74,11 +76,8 @@ directory exists, marks the launch scripts executable, and creates `.env` from
 `.env.example` only when `.env` does not already exist. It reports an `apt` command if
 `curl`, Chromium, or Python venv support is missing.
 
-Add the RetroAchievements API key without committing it:
-
-```bash
-nano .env
-```
+After installation, open the Settings page and save the RetroAchievements API key.
+An existing `RA_API_KEY` in `.env` is still used until a key is saved through Settings.
 
 Keep `LEFTOVER_ACHIEVEMENTS_DB_PATH=database/leftover.db` to store persistent SQLite
 data inside the project. Relative database paths are resolved from the project root;
