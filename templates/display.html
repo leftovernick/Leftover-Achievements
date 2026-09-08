@@ -4,27 +4,27 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Display</title>
-    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=console-display-4" />
   </head>
   <body class="pi-display">
     <main class="display-shell" data-display-rotation data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
       <div class="display-carousel-track" data-carousel-track>
       <section class="display-slide display-section is-active" data-slide="overall" data-duration="{{ display_section_durations.overall * 1000 }}">
         <div class="display-slide-header">
-          <p>Overall Rankings</p>
-          <span>Total Hardcore Points</span>
+          <div><span class="display-eyebrow">Leaderboard</span><p>Overall Rankings</p></div>
+          <span class="display-header-note">All-time · Hardcore</span>
         </div>
         <div class="display-list-viewport" data-scroll-list>
           <ol class="display-list display-ranking-list">
             {% for u in users %}
-              <li>
-                <b>{{ loop.index }}</b>
+              <li class="display-rank-{{ loop.index }}">
+                <b><small>#</small>{{ loop.index }}</b>
                 <span class="display-ranked-user">
                   {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" />{% endif %}
                   <span>{{ u.username }}</span>
                 </span>
-                <strong>{{ u.hardcore_display }}</strong>
-                <em>({{ u.retro_points_display }})</em>
+                <span class="display-rank-stat display-rank-stat-primary"><strong>{{ u.hardcore_display }}</strong></span>
+                <span class="display-rank-stat display-rank-stat-secondary"><em>({{ u.retro_points_display }})</em></span>
               </li>
             {% else %}
               <li class="display-empty">No tracked users yet.</li>
@@ -35,20 +35,20 @@
 
       <section class="display-slide display-section" data-slide="weekly" data-duration="{{ display_section_durations.weekly * 1000 }}">
         <div class="display-slide-header">
-          <p>Weekly Rankings</p>
-          <span>Since {{ week_start_display }}</span>
+          <div><span class="display-eyebrow">Leaderboard</span><p>Weekly Rankings</p></div>
+          <span class="display-header-note">Since {{ week_start_display }}</span>
         </div>
         <div class="display-list-viewport" data-scroll-list>
           <ol class="display-list display-ranking-list">
             {% for u in weekly_users %}
-              <li>
-                <b>{{ loop.index }}</b>
+              <li class="display-rank-{{ loop.index }}">
+                <b><small>#</small>{{ loop.index }}</b>
                 <span class="display-ranked-user">
                   {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" />{% endif %}
                   <span>{{ u.username }}</span>
                 </span>
-                <strong class="display-hc-points">+{{ u.weekly_hardcore_display }}</strong>
-                <em class="display-rp-points">(+{{ u.weekly_retro_points_display }})</em>
+                <span class="display-rank-stat display-rank-stat-primary"><strong class="display-hc-points">+{{ u.weekly_hardcore_display }}</strong></span>
+                <span class="display-rank-stat display-rank-stat-secondary"><em class="display-rp-points">(+{{ u.weekly_retro_points_display }})</em></span>
               </li>
             {% else %}
               <li class="display-empty">No tracked users yet.</li>
@@ -60,24 +60,28 @@
       {% for player in currently_playing_users %}
         <section class="display-slide display-section display-current" data-slide="current" data-duration="{{ display_section_durations.current * 1000 }}">
           <div class="display-slide-header">
-            <p>Currently Playing</p>
-            <span>{{ player.username }}</span>
+            <div><span class="display-eyebrow">Live Now</span><p>Currently Playing</p></div>
+            <span class="display-header-note">Hardcore session</span>
           </div>
           <article class="display-player">
             {% if player.game_image %}
               <img src="{{ player.game_image }}" alt="{{ player.game_title }}" class="display-game-image" />
             {% endif %}
-            <div>
+            <div class="display-player-copy">
               <div class="display-user-row">
                 {% if player.avatar %}<img src="{{ player.avatar }}" alt="{{ player.username }} avatar" class="avatar" />{% endif %}
                 <span>{{ player.username }}</span>
               </div>
               <h1>{{ player.game_title }}</h1>
-              <p>{{ player.rich_presence }}</p>
-              <div class="display-stats">
-                <strong>{{ player.hardcore_achievements }} / {{ player.total_achievements }} achievements</strong>
+              <p class="display-rich-presence">{{ player.rich_presence }}</p>
+              <div class="display-progress-heading">
                 <strong>{{ player.completion_percentage }}%</strong>
-                <strong class="display-points-stat">{{ player.hardcore_points_display }} / {{ player.total_points_display }}</strong>
+                <span>{{ player.hardcore_achievements }} / {{ player.total_achievements }} achievements</span>
+              </div>
+              <div class="display-progress-track"><i style="--progress: {{ player.completion_percentage }}%"></i></div>
+              <div class="display-stats">
+                <span><small>Hardcore points</small><strong class="display-points-stat">{{ player.hardcore_points_display }}</strong></span>
+                <span><small>Available</small><strong>{{ player.total_points_display }}</strong></span>
               </div>
             </div>
           </article>
@@ -86,27 +90,28 @@
 
       <section class="display-slide display-section" data-slide="recent" data-duration="{{ display_section_durations.recent * 1000 }}">
         <div class="display-slide-header">
-          <p>Recent Activity</p>
-          <span>Latest Hardcore Unlocks</span>
+          <div><span class="display-eyebrow">Timeline</span><p>Recent Activity</p></div>
+          <span class="display-header-note">Latest Hardcore unlocks</span>
         </div>
-        <div class="display-activity-list">
-          {% for activity in recent_activity %}
-            <article>
-              {% if activity.achievement_badge %}<img src="{{ activity.achievement_badge }}" alt="{{ activity.achievement_title }} badge" />{% endif %}
-              <div>
-                <strong>{{ activity.username }}</strong>
-                <span>{{ activity.achievement_title }}</span>
-                <em class="display-activity-meta">
-                  {{ activity.game_title }} ·
-                  <span class="display-hc-points">{{ activity.points_display }}</span>
-                  {% if activity.retro_points %} · <span class="display-rp-points">({{ activity.retro_points_display }})</span>{% endif %}
-                  · {{ activity.unlock_time_display }}
-                </em>
-              </div>
-            </article>
-          {% else %}
-            <div class="display-empty">No recent Hardcore achievements.</div>
-          {% endfor %}
+        <div class="display-activity-viewport" data-scroll-list>
+          <div class="display-activity-list">
+            {% for activity in recent_activity %}
+              <article>
+                {% if activity.achievement_badge %}<img src="{{ activity.achievement_badge }}" alt="{{ activity.achievement_title }} badge" />{% endif %}
+                <div class="display-activity-copy">
+                  <span class="display-activity-title">{{ activity.achievement_title }}</span>
+                  <strong>{{ activity.username }} <i>·</i> <em>{{ activity.game_title }}</em></strong>
+                </div>
+                <div class="display-activity-stats">
+                  <strong class="display-hc-points">+{{ activity.points_display }} pts</strong>
+                  {% if activity.retro_points %}<span class="display-rp-points">(+{{ activity.retro_points_display }})</span>{% endif %}
+                  <time>{{ activity.unlock_time_display }}</time>
+                </div>
+              </article>
+            {% else %}
+              <div class="display-empty">No recent Hardcore achievements.</div>
+            {% endfor %}
+          </div>
         </div>
       </section>
       </div>
@@ -134,6 +139,7 @@
             </div>
           </div>
         </div>
+        <div class="achievement-notification-progress" aria-hidden="true"><i></i></div>
       </div>
     </aside>
 

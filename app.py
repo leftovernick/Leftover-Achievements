@@ -344,8 +344,8 @@ def prepare_recent_activity(recent_activity):
     return recent_activity
 
 
-def serialize_achievement_event(activity: dict) -> dict:
-    return {
+def serialize_achievement_event(activity: dict, progress: dict | None = None) -> dict:
+    event = {
         "type": "achievement",
         "dedupe_key": activity["dedupe_key"],
         "username": activity["username"],
@@ -365,6 +365,56 @@ def serialize_achievement_event(activity: dict) -> dict:
         "hardcore": True,
         "duration_ms": notification_seconds("achievement") * 1000,
     }
+    if progress:
+        event.update(progress)
+    return event
+
+
+async def achievement_completion_ranges(username: str, activities: list[dict]) -> dict[str, dict]:
+    """Return exact before/after Hardcore completion percentages for new unlocks."""
+    activities_by_game = {}
+    for activity in activities:
+        activities_by_game.setdefault(activity["game_id"], []).append(activity)
+
+    ranges = {}
+    for game_id, game_activities in activities_by_game.items():
+        try:
+            game_progress = await ra_client.game_info_and_user_progress(username, game_id)
+        except (aiohttp.ClientError, ValueError):
+            continue
+
+        achievements = game_progress.get("Achievements") or game_progress.get("achievements") or {}
+        total = int(
+            game_progress.get("NumAchievements")
+            or game_progress.get("numAchievements")
+            or len(achievements)
+        )
+        if not total:
+            continue
+
+        final_count = game_progress.get("NumAwardedToUserHardcore")
+        if final_count is None:
+            final_count = game_progress.get("numAwardedToUserHardcore")
+        if final_count is None:
+            final_count = sum(
+                1
+                for achievement in achievements.values()
+                if isinstance(achievement, dict)
+                and (achievement.get("DateEarnedHardcore") or achievement.get("dateEarnedHardcore"))
+            )
+        final_count = int(final_count)
+
+        ordered = sorted(game_activities, key=lambda activity: activity["unlock_time"])
+        first_new_count = max(0, final_count - len(ordered))
+        for index, activity in enumerate(ordered):
+            before_count = min(total, first_new_count + index)
+            after_count = min(total, before_count + 1)
+            ranges[activity["dedupe_key"]] = {
+                "completion_before_percentage": (before_count / total) * 100,
+                "completion_after_percentage": (after_count / total) * 100,
+            }
+
+    return ranges
 
 
 def serialize_mastery_event(mastery: dict, profile: dict | None = None) -> dict:
@@ -462,10 +512,13 @@ async def process_achievement_unlocks_for_user(username: str, recent_minutes: in
         return
 
     new_activities = [activity for activity in activities if not db.achievement_unlock_seen(activity["dedupe_key"])]
+    completion_ranges = await achievement_completion_ranges(username, new_activities)
     for activity in new_activities:
         db.save_processed_achievement_unlock(activity, announced=True)
         db.save_recent_activity(activity, keep_limit=RECENT_ACTIVITY_LIMIT)
-        await publish_display_event(serialize_achievement_event(activity))
+        await publish_display_event(
+            serialize_achievement_event(activity, completion_ranges.get(activity["dedupe_key"]))
+        )
 
 
 async def process_game_awards_for_user(username: str):
@@ -768,6 +821,8 @@ async def test_display_alert(alert_type: str):
             "unlock_time_iso": datetime.now(timezone.utc).isoformat(),
             "unlock_time_display": "Now",
             "hardcore": True,
+            "completion_before_percentage": 42,
+            "completion_after_percentage": 43,
             "duration_ms": notification_seconds("achievement") * 1000,
         },
         "beaten": {

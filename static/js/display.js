@@ -74,6 +74,22 @@
     }
   };
 
+  const setNotificationProgress = (startPercentage, endPercentage) => {
+    const start = Number(startPercentage);
+    const end = Number(endPercentage);
+    const hasProgress = startPercentage !== null
+      && startPercentage !== undefined
+      && endPercentage !== null
+      && endPercentage !== undefined
+      && Number.isFinite(start)
+      && Number.isFinite(end);
+    notification?.classList.toggle('has-progress', hasProgress);
+    if (!notification || !hasProgress) return;
+
+    notification.style.setProperty('--notification-progress-start', Math.min(1, Math.max(0, start / 100)));
+    notification.style.setProperty('--notification-progress-end', Math.min(1, Math.max(0, end / 100)));
+  };
+
   const playGeneratedAchievementSound = () => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -165,7 +181,7 @@
 
   const startLeaderboardScroll = (slide, preservePosition = false) => {
     const viewport = slide.querySelector('[data-scroll-list]');
-    const list = viewport?.querySelector('.display-ranking-list');
+    const list = viewport?.querySelector('.display-ranking-list, .display-activity-list');
     if (!viewport || !list) return;
 
     if (!preservePosition) {
@@ -281,12 +297,13 @@
     setText('[data-achievement-game]', event.game_title);
     setText('[data-achievement-points]', event.points_display);
     setText('[data-achievement-retro-points]', event.retro_points ? `(${event.retro_points_display})` : '');
+    setNotificationProgress(event.completion_before_percentage, event.completion_after_percentage);
   };
 
   const renderMasteryNotification = (event) => {
     notification.classList.remove('is-beaten');
     notification.classList.add('is-mastery');
-    setText('[data-achievement-heading]', 'Game Mastered');
+    setText('[data-achievement-heading]', 'MASTERED');
     setText('[data-achievement-mode]', 'Mastery');
     setImage('[data-achievement-user-avatar]', event.avatar, `${event.username} avatar`);
     setImage('[data-achievement-badge]', event.game_image, `${event.game_title} image`);
@@ -294,11 +311,12 @@
     setText('[data-achievement-title]', event.game_title);
     setText(
       '[data-achievement-description]',
-      `${event.hardcore_achievements} / ${event.total_achievements} Hardcore achievements completed`
+      `100% · ${event.hardcore_achievements} / ${event.total_achievements} Hardcore achievements completed`
     );
     setText('[data-achievement-game]', 'Hardcore Mastery');
     setText('[data-achievement-points]', `${event.hardcore_points_display} / ${event.total_points_display}`);
     setText('[data-achievement-retro-points]', '');
+    setNotificationProgress(0, 100);
   };
 
   const renderBeatenNotification = (event) => {
@@ -319,9 +337,13 @@
     setText('[data-achievement-game]', 'Hardcore Game Beaten');
     setText(
       '[data-achievement-points]',
-      event.total_points ? `${event.hardcore_points_display} / ${event.total_points_display} points` : ''
+      event.total_points ? `${event.hardcore_points_display} / ${event.total_points_display}` : ''
     );
     setText('[data-achievement-retro-points]', '');
+    setNotificationProgress(
+      0,
+      event.total_achievements ? (event.hardcore_achievements / event.total_achievements) * 100 : null
+    );
   };
 
   const showNextNotification = () => {
@@ -374,7 +396,7 @@
 
   slides.forEach((slide, index) => {
     slide.classList.toggle('is-active', index === currentIndex);
-    const list = slide.querySelector('.display-ranking-list');
+    const list = slide.querySelector('.display-ranking-list, .display-activity-list');
     if (list) list.style.transform = 'translate3d(0, 0, 0)';
   });
 
