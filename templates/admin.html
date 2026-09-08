@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements — Admin</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Admin — Tracked Users</h1>
+      <a href="/">Dashboard</a>
+    </header>
+    <main class="container">
+      {% if message %}
+        <div class="message">{{ message }}</div>
+      {% endif %}
+
+      <section class="add-user">
+        <h2>Add RetroAchievements User</h2>
+        <form method="post" action="/admin/add">
+          <input name="username" placeholder="RetroAchievements username" required />
+          <button type="submit">Add</button>
+        </form>
+      </section>
+
+      <section class="tracked">
+        <h2>Currently Tracked</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Username</th><th>ULID</th><th>Added</th><th>Action</th></tr></thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>{{ u.id }}</td>
+              <td>{{ u.ra_username }}</td>
+              <td>{{ u.ra_ulid or "-" }}</td>
+              <td>{{ u.created_at }}</td>
+              <td>
+                <form method="post" action="/admin/remove" style="display:inline">
+                  <input type="hidden" name="user_id" value="{{ u.id }}" />
+                  <button type="submit">Remove</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5" class="empty">No tracked users yet.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements — Dashboard</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>LeftoverAchievements — Leaderboard</h1>
+      <a href="/admin">Admin</a>
+    </header>
+    <main class="container">
+      <section class="currently-playing-section">
+        <h2>Currently Playing</h2>
+        <div class="current-players">
+          {% for player in currently_playing_users %}
+            <article class="current-player">
+              {% if player.game_image %}
+                <img src="{{ player.game_image }}" alt="{{ player.game_title }}" class="game-image" />
+              {% endif %}
+              <div class="current-player-details">
+                <div class="player">
+                  {% if player.avatar %}
+                    <img src="{{ player.avatar }}" alt="{{ player.username }} avatar" class="avatar" />
+                  {% endif %}
+                  <span class="username">{{ player.username }}</span>
+                </div>
+                <h3>{{ player.game_title }}</h3>
+                <p class="rich-presence">{{ player.rich_presence }}</p>
+                <div class="game-progress">
+                  <div>
+                    <span class="stat-label">Hardcore Achievements</span>
+                    <strong>{{ player.hardcore_achievements }} / {{ player.total_achievements }} achievements</strong>
+                  </div>
+                  <div>
+                    <span class="stat-label">Hardcore Completion</span>
+                    <strong>{{ player.completion_percentage }}%</strong>
+                  </div>
+                  <div>
+                    <span class="stat-label">Hardcore Points</span>
+                    <strong>{{ player.hardcore_points_display }} / {{ player.total_points_display }} pts</strong>
+                  </div>
+                </div>
+              </div>
+            </article>
+          {% else %}
+            <div class="empty current-empty">Nobody is currently playing.</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="recent-activity-section">
+        <h2>Recent Activity</h2>
+        <div class="activity-feed">
+          {% for activity in recent_activity %}
+            <article class="activity-item">
+              {% if activity.achievement_badge %}
+                <img
+                  src="{{ activity.achievement_badge }}"
+                  alt="{{ activity.achievement_title }} badge"
+                  class="achievement-badge"
+                />
+              {% endif %}
+              <div class="activity-details">
+                <div class="activity-meta">
+                  <div class="player">
+                    {% if activity.avatar %}
+                      <img src="{{ activity.avatar }}" alt="{{ activity.username }} avatar" class="avatar small-avatar" />
+                    {% endif %}
+                    <span class="username">{{ activity.username }}</span>
+                  </div>
+                  <time datetime="{{ activity.unlock_time_iso }}">{{ activity.unlock_time_display }}</time>
+                </div>
+                <h3>{{ activity.achievement_title }}</h3>
+                <p>{{ activity.achievement_description }}</p>
+                <div class="activity-footer">
+                  <span>{{ activity.game_title }} #{{ activity.game_id }}</span>
+                  <strong>{{ activity.points_display }} pts</strong>
+                  {% if activity.retro_points %}
+                    <strong>{{ activity.retro_points_display }} RP</strong>
+                  {% endif %}
+                </div>
+              </div>
+            </article>
+          {% else %}
+            <div class="empty current-empty">No recent Hardcore achievements.</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="rankings-section">
+        <h2>Overall Rankings</h2>
+        <table class="leaderboard">
+          <thead>
+            <tr><th>Rank</th><th>Player</th><th>Hardcore Points</th><th>RetroPoints</th></tr>
+          </thead>
+          <tbody>
+          {% for u in users %}
+            <tr>
+              <td class="rank">{{ loop.index }}</td>
+              <td class="player">
+                {% if u.avatar %}
+                  <img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar" />
+                {% endif %}
+                <span class="username">{{ u.username }}</span>
+              </td>
+              <td class="points">{{ u.hardcore_display }} pts</td>
+              <td class="points retro-points">{{ u.retro_points_display }} RP</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4" class="empty">No tracked users yet. Add one from Admin.</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="rankings-section">
+        <h2>Weekly Rankings</h2>
+        <table class="leaderboard">
+          <thead>
+            <tr><th>Rank</th><th>Player</th><th>Hardcore Points</th><th>RetroPoints</th></tr>
+          </thead>
+          <tbody>
+          {% for u in weekly_users %}
+            <tr>
+              <td class="rank">{{ loop.index }}</td>
+              <td class="player">
+                {% if u.avatar %}
+                  <img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar" />
+                {% endif %}
+                <span class="username">{{ u.username }}</span>
+              </td>
+              <td class="points weekly-points">+{{ u.weekly_hardcore_display }} pts</td>
+              <td class="points weekly-points">+{{ u.weekly_retro_points_display }} RP</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4" class="empty">No tracked users yet. Add one from Admin.</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </main>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>
