@@ -36,7 +36,7 @@ Then edit `.env` and set `RA_API_KEY` to your RetroAchievements web API key.
 4. Run the FastAPI app:
 
 ```bash
-uvicorn app:app --reload
+uvicorn app:app --reload --timeout-graceful-shutdown 1
 ```
 
 5. Open the dashboard and admin pages in your browser:
@@ -49,3 +49,4 @@ uvicorn app:app --reload
 - Do not commit your `.env` file (it's in `.gitignore`).
 - The app will create a local SQLite database at `database/leftover.db` automatically.
 - The admin page validates users through `API_GetUserProfile.php`, the official RetroAchievements profile endpoint.
+- The one-second graceful-shutdown limit lets the development server reload even while the display page has an open live-events connection.

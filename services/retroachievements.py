@@ -1,5 +1,7 @@
+import asyncio
 import os
 import ssl
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
@@ -10,6 +12,8 @@ import certifi
 RA_BASE_URL = "https://retroachievements.org"
 RA_API_URL = f"{RA_BASE_URL}/API/"
 CURRENT_ACTIVITY_WINDOW = timedelta(minutes=5)
+REQUEST_INTERVAL_SECONDS = 0.75
+RATE_LIMIT_RETRY_SECONDS = 3.0
 
 
 class RetroAchievements:
@@ -20,18 +24,45 @@ class RetroAchievements:
         self.base_url = base_url or RA_API_URL
         self.timeout = aiohttp.ClientTimeout(total=10)
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self.request_lock = asyncio.Lock()
+        self.last_request_at = 0.0
 
     async def _get_json(self, endpoint: str, params: dict) -> dict | list:
         url = urljoin(self.base_url, endpoint)
         query_params = {**params, "y": self.api_key}
 
-        async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            async with session.get(url, params=query_params, ssl=self.ssl_context) as resp:
-                if resp.status == 404:
-                    raise ValueError("RetroAchievements resource not found")
-                if resp.status != 200:
-                    raise ValueError(f"RetroAchievements API returned HTTP {resp.status}")
-                return await resp.json(content_type=None)
+        for attempt in range(3):
+            await self._wait_for_request_slot()
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.get(url, params=query_params, ssl=self.ssl_context) as resp:
+                    if resp.status == 429 and attempt < 2:
+                        retry_after = self._retry_after_seconds(resp)
+                        await asyncio.sleep(retry_after)
+                        continue
+                    if resp.status == 404:
+                        raise ValueError("RetroAchievements resource not found")
+                    if resp.status != 200:
+                        raise ValueError(f"RetroAchievements API returned HTTP {resp.status}")
+                    return await resp.json(content_type=None)
+
+        raise ValueError("RetroAchievements API rate limit exceeded")
+
+    async def _wait_for_request_slot(self):
+        async with self.request_lock:
+            elapsed = time.monotonic() - self.last_request_at
+            wait_time = REQUEST_INTERVAL_SECONDS - elapsed
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+            self.last_request_at = time.monotonic()
+
+    def _retry_after_seconds(self, response: aiohttp.ClientResponse) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), REQUEST_INTERVAL_SECONDS)
+            except ValueError:
+                pass
+        return RATE_LIMIT_RETRY_SECONDS
 
     async def lookup_user(self, username: str) -> dict:
         """Return normalized profile data for a RetroAchievements username or ULID."""
@@ -99,6 +130,7 @@ class RetroAchievements:
             {
                 "u": target,
                 "g": game_id,
+                "a": 1,
             },
         )
 
@@ -248,6 +280,142 @@ class RetroAchievements:
 
         return parsed.astimezone()
 
+    async def user_completion_progress(self, username: str, count: int = 500, offset: int = 0) -> dict:
+        """Return a page of completion progress records for a RetroAchievements user."""
+        if not self.api_key:
+            raise ValueError("RA API key not set")
+
+        target = username.strip()
+        if not target:
+            raise ValueError("RetroAchievements username is required")
+
+        data = await self._get_json(
+            "API_GetUserCompletionProgress.php",
+            {
+                "u": target,
+                "c": count,
+                "o": offset,
+            },
+        )
+
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected RetroAchievements API response")
+
+        return data
+
+    async def hardcore_game_awards(self, username: str, fetch_all: bool = False) -> dict[str, list[dict]]:
+        """Return canonical Hardcore beaten and mastery awards from completion progress."""
+        awards = {"beaten": [], "masteries": []}
+        offset = 0
+        count = 500
+
+        while True:
+            data = await self.user_completion_progress(username, count=count, offset=offset)
+            results = data.get("Results") or data.get("results") or []
+            if not isinstance(results, list):
+                raise ValueError("Unexpected RetroAchievements completion progress response")
+
+            for game in results:
+                if not isinstance(game, dict):
+                    continue
+                award_kind = game.get("HighestAwardKind") or game.get("highestAwardKind")
+                if award_kind not in {"beaten-hardcore", "mastered"}:
+                    continue
+
+                game_id = game.get("GameID") or game.get("gameId")
+                awarded_at = game.get("HighestAwardDate") or game.get("highestAwardDate")
+                if not game_id or not awarded_at:
+                    continue
+
+                image = game.get("ImageIcon") or game.get("imageIcon")
+                if image:
+                    image = urljoin(RA_BASE_URL, image)
+
+                event_type = "beaten" if award_kind == "beaten-hardcore" else "mastery"
+                awards["beaten" if event_type == "beaten" else "masteries"].append(
+                    {
+                        "username": username,
+                        "game_id": int(game_id),
+                        "game_title": game.get("Title") or game.get("title") or "Unknown Game",
+                        "game_image": image,
+                        "hardcore_achievements": int(game.get("NumAwardedHardcore") or game.get("numAwardedHardcore") or 0),
+                        "total_achievements": int(game.get("MaxPossible") or game.get("maxPossible") or 0),
+                        "awarded_at": awarded_at,
+                        "dedupe_key": f"{username}:{event_type}:{int(game_id)}:{awarded_at}",
+                    }
+                )
+
+            total = int(data.get("Total") or data.get("total") or len(results))
+            offset += len(results)
+            if not fetch_all or not results or offset >= total:
+                break
+
+        return awards
+
+    async def hardcore_masteries(self, username: str, fetch_all: bool = False) -> list[dict]:
+        """Return normalized Hardcore mastery awards from completion progress data."""
+        return (await self.hardcore_game_awards(username, fetch_all))["masteries"]
+
+    async def hardcore_beaten_games(self, username: str, fetch_all: bool = False) -> list[dict]:
+        """Return canonical Hardcore beaten-game awards from completion progress data."""
+        return (await self.hardcore_game_awards(username, fetch_all))["beaten"]
+
+    async def game_award_event_details(self, username: str, award: dict) -> dict:
+        """Enrich a canonical Hardcore game award with art and earned point totals."""
+        game_progress = await self.game_info_and_user_progress(username, award["game_id"])
+        achievements = game_progress.get("Achievements") or game_progress.get("achievements") or {}
+        if not isinstance(achievements, dict):
+            achievements = {}
+
+        hardcore_points = 0
+        total_points = 0
+        for achievement in achievements.values():
+            if isinstance(achievement, dict):
+                points = int(achievement.get("Points") or achievement.get("points") or 0)
+                total_points += points
+                if achievement.get("DateEarnedHardcore") or achievement.get("dateEarnedHardcore"):
+                    hardcore_points += points
+
+        total_points = total_points or int(game_progress.get("PossibleScore") or game_progress.get("possibleScore") or 0)
+        total_achievements = int(
+            game_progress.get("NumAchievements")
+            or game_progress.get("numAchievements")
+            or award.get("total_achievements", 0)
+        )
+        hardcore_achievements = int(
+            game_progress.get("NumAwardedToUserHardcore")
+            or game_progress.get("numAwardedToUserHardcore")
+            or award.get("hardcore_achievements", 0)
+        )
+
+        image = (
+            game_progress.get("ImageIngame")
+            or game_progress.get("imageIngame")
+            or game_progress.get("ImageTitle")
+            or game_progress.get("imageTitle")
+            or game_progress.get("ImageBoxArt")
+            or game_progress.get("imageBoxArt")
+            or game_progress.get("ImageIcon")
+            or game_progress.get("imageIcon")
+            or award.get("game_image")
+        )
+        if image:
+            image = urljoin(RA_BASE_URL, image)
+
+        return {
+            **award,
+            "game_title": game_progress.get("Title") or game_progress.get("title") or award["game_title"],
+            "game_image": image,
+            "hardcore_achievements": hardcore_achievements,
+            "total_achievements": total_achievements,
+            "hardcore_points": hardcore_points,
+            "total_points": total_points,
+        }
+
+    async def mastery_event_details(self, username: str, mastery: dict) -> dict:
+        """Enrich a Hardcore mastery event with game art and point totals."""
+        return await self.game_award_event_details(username, mastery)
+
     async def achievements_earned_between(
         self,
         username: str,
@@ -308,7 +476,12 @@ class RetroAchievements:
             "retro_points": retro_points,
         }
 
-    async def recent_hardcore_achievements(self, username: str, recent_minutes: int = 1440) -> list[dict]:
+    async def recent_hardcore_achievements(
+        self,
+        username: str,
+        recent_minutes: int = 1440,
+        profile: dict | None = None,
+    ) -> list[dict]:
         """Return normalized recent Hardcore achievement unlocks for a user."""
         if not self.api_key:
             raise ValueError("RA API key not set")
@@ -317,7 +490,7 @@ class RetroAchievements:
         if not target:
             raise ValueError("RetroAchievements username is required")
 
-        profile = await self.lookup_user(target)
+        profile = profile or await self.lookup_user(target)
         data = await self._get_json(
             "API_GetUserRecentAchievements.php",
             {

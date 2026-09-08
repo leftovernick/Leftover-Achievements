@@ -3,20 +3,39 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>LeftoverAchievements — Dashboard</title>
+    <title>LeftoverAchievements Dashboard</title>
     <link rel="stylesheet" href="/static/css/styles.css" />
   </head>
-  <body>
-    <header>
-      <h1>LeftoverAchievements — Leaderboard</h1>
-      <a href="/admin">Admin</a>
+  <body class="web-dashboard">
+    <header class="top-nav">
+      <a href="/" class="brand">LeftoverAchievements</a>
+      <nav aria-label="Main navigation">
+        <a href="/" class="active">Dashboard</a>
+        <span class="disabled">Activity</span>
+        <a href="/users">Users</a>
+        <span class="disabled">History</span>
+        <a href="/display">Display</a>
+        <a href="/admin">Settings</a>
+      </nav>
     </header>
-    <main class="container">
-      <section class="currently-playing-section">
-        <h2>Currently Playing</h2>
-        <div class="current-players">
+
+    <main class="dashboard-shell">
+      <section class="dashboard-hero panel">
+        <div>
+          <p class="eyebrow">RetroAchievements Monitor</p>
+          <h1>Dashboard</h1>
+        </div>
+        <a href="/display" class="action-link">View Display</a>
+      </section>
+
+      <section class="panel current-activity-panel">
+        <div class="panel-header">
+          <h2>Current Activity</h2>
+          <span>{{ currently_playing_users|length }} active</span>
+        </div>
+        <div class="current-players compact-current-players">
           {% for player in currently_playing_users %}
-            <article class="current-player">
+            <article class="current-player dashboard-current-player">
               {% if player.game_image %}
                 <img src="{{ player.game_image }}" alt="{{ player.game_title }}" class="game-image" />
               {% endif %}
@@ -31,116 +50,110 @@
                 <p class="rich-presence">{{ player.rich_presence }}</p>
                 <div class="game-progress">
                   <div>
-                    <span class="stat-label">Hardcore Achievements</span>
-                    <strong>{{ player.hardcore_achievements }} / {{ player.total_achievements }} achievements</strong>
+                    <span class="stat-label">Achievements</span>
+                    <strong>{{ player.hardcore_achievements }} / {{ player.total_achievements }}</strong>
                   </div>
                   <div>
-                    <span class="stat-label">Hardcore Completion</span>
+                    <span class="stat-label">Complete</span>
                     <strong>{{ player.completion_percentage }}%</strong>
                   </div>
                   <div>
-                    <span class="stat-label">Hardcore Points</span>
-                    <strong>{{ player.hardcore_points_display }} / {{ player.total_points_display }} pts</strong>
+                    <span class="stat-label">Points</span>
+                    <strong>{{ player.hardcore_points_display }} / {{ player.total_points_display }}</strong>
                   </div>
                 </div>
               </div>
             </article>
           {% else %}
-            <div class="empty current-empty">Nobody is currently playing.</div>
+            <div class="empty">Nobody is currently playing.</div>
           {% endfor %}
         </div>
       </section>
 
-      <section class="recent-activity-section">
-        <h2>Recent Activity</h2>
-        <div class="activity-feed">
-          {% for activity in recent_activity %}
-            <article class="activity-item">
-              {% if activity.achievement_badge %}
-                <img
-                  src="{{ activity.achievement_badge }}"
-                  alt="{{ activity.achievement_title }} badge"
-                  class="achievement-badge"
-                />
-              {% endif %}
-              <div class="activity-details">
-                <div class="activity-meta">
+      <section class="ranking-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Overall Rankings</h2>
+            <span>Hardcore total</span>
+          </div>
+          <table class="leaderboard compact-table">
+            <thead>
+              <tr><th>Rank</th><th>Player</th><th>HC Points</th><th>RetroPoints</th></tr>
+            </thead>
+            <tbody>
+            {% for u in users %}
+              <tr>
+                <td class="rank">{{ loop.index }}</td>
+                <td class="player-cell">
                   <div class="player">
-                    {% if activity.avatar %}
-                      <img src="{{ activity.avatar }}" alt="{{ activity.username }} avatar" class="avatar small-avatar" />
-                    {% endif %}
-                    <span class="username">{{ activity.username }}</span>
+                    {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar small-avatar" />{% endif %}
+                    <span class="username">{{ u.username }}</span>
                   </div>
-                  <time datetime="{{ activity.unlock_time_iso }}">{{ activity.unlock_time_display }}</time>
-                </div>
-                <h3>{{ activity.achievement_title }}</h3>
-                <p>{{ activity.achievement_description }}</p>
-                <div class="activity-footer">
-                  <span>{{ activity.game_title }} #{{ activity.game_id }}</span>
-                  <strong>{{ activity.points_display }} pts</strong>
-                  {% if activity.retro_points %}
-                    <strong>{{ activity.retro_points_display }} RP</strong>
-                  {% endif %}
-                </div>
-              </div>
-            </article>
-          {% else %}
-            <div class="empty current-empty">No recent Hardcore achievements.</div>
-          {% endfor %}
+                </td>
+                <td class="points">{{ u.hardcore_display }}</td>
+                <td class="points retro-points">({{ u.retro_points_display }})</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="empty">No tracked users yet. Add one from Settings.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Weekly Rankings</h2>
+            <span>Since {{ week_start_display }}</span>
+          </div>
+          <table class="leaderboard compact-table">
+            <thead>
+              <tr><th>Rank</th><th>Player</th><th>HC Points</th><th>RetroPoints</th></tr>
+            </thead>
+            <tbody>
+            {% for u in weekly_users %}
+              <tr>
+                <td class="rank">{{ loop.index }}</td>
+                <td class="player-cell">
+                  <div class="player">
+                    {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar small-avatar" />{% endif %}
+                    <span class="username">{{ u.username }}</span>
+                  </div>
+                </td>
+                <td class="points weekly-hardcore-points">+{{ u.weekly_hardcore_display }}</td>
+                <td class="points weekly-retro-points retro-points">(+{{ u.weekly_retro_points_display }})</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="empty">No tracked users yet. Add one from Settings.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
         </div>
       </section>
 
-      <section class="rankings-section">
-        <h2>Overall Rankings</h2>
-        <table class="leaderboard">
+      <section class="panel recent-activity-panel">
+        <div class="panel-header">
+          <h2>Recent Activity</h2>
+          <span>Latest 5 Hardcore unlocks</span>
+        </div>
+        <table class="activity-table compact-table">
           <thead>
-            <tr><th>Rank</th><th>Player</th><th>Hardcore Points</th><th>RetroPoints</th></tr>
+            <tr><th>Badge</th><th>User</th><th>Achievement</th><th>Game</th><th>Points</th><th>Time</th></tr>
           </thead>
           <tbody>
-          {% for u in users %}
+          {% for activity in recent_activity %}
             <tr>
-              <td class="rank">{{ loop.index }}</td>
-              <td class="player">
-                {% if u.avatar %}
-                  <img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar" />
-                {% endif %}
-                <span class="username">{{ u.username }}</span>
+              <td>{% if activity.achievement_badge %}<img src="{{ activity.achievement_badge }}" alt="{{ activity.achievement_title }} badge" class="achievement-badge table-badge" />{% endif %}</td>
+              <td>{{ activity.username }}</td>
+              <td>
+                <strong>{{ activity.achievement_title }}</strong>
+                <span>{{ activity.achievement_description }}</span>
               </td>
-              <td class="points">{{ u.hardcore_display }} pts</td>
-              <td class="points retro-points">{{ u.retro_points_display }} RP</td>
+              <td>{{ activity.game_title }} #{{ activity.game_id }}</td>
+              <td class="points">{{ activity.points_display }}{% if activity.retro_points %}<br><span class="retro-points">({{ activity.retro_points_display }})</span>{% endif %}</td>
+              <td><time datetime="{{ activity.unlock_time_iso }}">{{ activity.unlock_time_display }}</time></td>
             </tr>
           {% else %}
-            <tr>
-              <td colspan="4" class="empty">No tracked users yet. Add one from Admin.</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </section>
-
-      <section class="rankings-section">
-        <h2>Weekly Rankings</h2>
-        <table class="leaderboard">
-          <thead>
-            <tr><th>Rank</th><th>Player</th><th>Hardcore Points</th><th>RetroPoints</th></tr>
-          </thead>
-          <tbody>
-          {% for u in weekly_users %}
-            <tr>
-              <td class="rank">{{ loop.index }}</td>
-              <td class="player">
-                {% if u.avatar %}
-                  <img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar" />
-                {% endif %}
-                <span class="username">{{ u.username }}</span>
-              </td>
-              <td class="points weekly-points">+{{ u.weekly_hardcore_display }} pts</td>
-              <td class="points weekly-points">+{{ u.weekly_retro_points_display }} RP</td>
-            </tr>
-          {% else %}
-            <tr>
-              <td colspan="4" class="empty">No tracked users yet. Add one from Admin.</td>
-            </tr>
+            <tr><td colspan="6" class="empty">No recent Hardcore achievements.</td></tr>
           {% endfor %}
           </tbody>
         </table>

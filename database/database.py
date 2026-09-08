@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 from datetime import datetime, timezone
 
 DB_DIR = os.path.dirname(__file__)
@@ -47,6 +48,124 @@ def init_db():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_rankings (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            hardcore_points INTEGER NOT NULL,
+            retro_points INTEGER NOT NULL,
+            week_start TEXT NOT NULL,
+            refreshed_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            canonical_username TEXT NOT NULL,
+            ra_ulid TEXT,
+            avatar TEXT,
+            hardcore_points INTEGER NOT NULL,
+            retro_points INTEGER NOT NULL,
+            refreshed_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS currently_playing_cache (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            active INTEGER NOT NULL,
+            payload_json TEXT,
+            refreshed_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_achievement_unlocks (
+            dedupe_key TEXT PRIMARY KEY,
+            ra_username TEXT NOT NULL COLLATE NOCASE,
+            achievement_id INTEGER NOT NULL,
+            unlock_time TEXT NOT NULL,
+            announced INTEGER NOT NULL,
+            processed_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS achievement_poll_state (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            initialized_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_mastery_events (
+            dedupe_key TEXT PRIMARY KEY,
+            ra_username TEXT NOT NULL COLLATE NOCASE,
+            game_id INTEGER NOT NULL,
+            awarded_at TEXT NOT NULL,
+            announced INTEGER NOT NULL,
+            processed_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mastery_poll_state (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            initialized_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_beaten_game_events (
+            ra_username TEXT NOT NULL COLLATE NOCASE,
+            game_id INTEGER NOT NULL,
+            awarded_at TEXT NOT NULL,
+            announced INTEGER NOT NULL,
+            processed_at TEXT NOT NULL,
+            PRIMARY KEY (ra_username, game_id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS beaten_game_poll_state (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            initialized_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_poll_schedule (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            last_polled_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+        VALUES ('audio_enabled', '1', ?)
+        """,
+        (datetime.now(timezone.utc).isoformat(),),
+    )
     conn.commit()
     conn.close()
 
@@ -56,6 +175,13 @@ def get_tracked_users():
         cur = conn.cursor()
         cur.execute("SELECT id, ra_username, ra_ulid, created_at FROM tracked_users ORDER BY created_at ASC")
         return [dict(r) for r in cur.fetchall()]
+
+
+def tracked_user_count() -> int:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) AS count FROM tracked_users")
+        return cur.fetchone()["count"]
 
 
 def tracked_user_exists(ra_username: str, ra_ulid: str | None = None) -> bool:
@@ -84,7 +210,47 @@ def add_tracked_user(ra_username: str, ra_ulid: str | None):
 def remove_tracked_user(user_id: int):
     with get_conn() as conn:
         cur = conn.cursor()
+        cur.execute("SELECT ra_username FROM tracked_users WHERE id = ?", (user_id,))
+        user = cur.fetchone()
         cur.execute("DELETE FROM tracked_users WHERE id = ?", (user_id,))
+        if user:
+            cur.execute("DELETE FROM user_poll_schedule WHERE ra_username = ?", (user["ra_username"],))
+        conn.commit()
+
+
+def next_tracked_user_to_poll() -> dict | None:
+    """Return the tracked user least recently handled by the event poller."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT tracked_users.ra_username, user_poll_schedule.last_polled_at
+            FROM tracked_users
+            LEFT JOIN user_poll_schedule
+              ON user_poll_schedule.ra_username = tracked_users.ra_username
+            ORDER BY
+              CASE WHEN user_poll_schedule.last_polled_at IS NULL THEN 0 ELSE 1 END,
+              user_poll_schedule.last_polled_at ASC,
+              tracked_users.created_at ASC
+            LIMIT 1
+            """
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def mark_tracked_user_polled(ra_username: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO user_poll_schedule (ra_username, last_polled_at)
+            VALUES (?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                last_polled_at = excluded.last_polled_at
+            """,
+            (ra_username, datetime.now(timezone.utc).isoformat()),
+        )
         conn.commit()
 
 
@@ -194,3 +360,475 @@ def prune_recent_activity(cur, keep_limit: int):
         """,
         (keep_limit,),
     )
+
+
+def get_weekly_rankings(week_start: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ra_username, hardcore_points, retro_points, week_start, refreshed_at
+            FROM weekly_rankings
+            WHERE week_start = ?
+            """,
+            (week_start,),
+        )
+        return {row["ra_username"].lower(): dict(row) for row in cur.fetchall()}
+
+
+def save_weekly_ranking(ra_username: str, hardcore_points: int, retro_points: int, week_start: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO weekly_rankings (ra_username, hardcore_points, retro_points, week_start, refreshed_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                hardcore_points = excluded.hardcore_points,
+                retro_points = excluded.retro_points,
+                week_start = excluded.week_start,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (
+                ra_username,
+                hardcore_points,
+                retro_points,
+                week_start,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def save_weekly_rankings(rankings: list[dict], week_start: str):
+    refreshed_at = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO weekly_rankings (ra_username, hardcore_points, retro_points, week_start, refreshed_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                hardcore_points = excluded.hardcore_points,
+                retro_points = excluded.retro_points,
+                week_start = excluded.week_start,
+                refreshed_at = excluded.refreshed_at
+            """,
+            [
+                (
+                    ranking["ra_username"],
+                    ranking["hardcore_points"],
+                    ranking["retro_points"],
+                    week_start,
+                    refreshed_at,
+                )
+                for ranking in rankings
+            ],
+        )
+        conn.commit()
+
+
+
+def get_user_profiles():
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                ra_username,
+                canonical_username,
+                ra_ulid,
+                avatar,
+                hardcore_points,
+                retro_points,
+                refreshed_at
+            FROM user_profiles
+            """
+        )
+        return {row["ra_username"].lower(): dict(row) for row in cur.fetchall()}
+
+
+def save_user_profile(ra_username: str, profile: dict):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO user_profiles (
+                ra_username,
+                canonical_username,
+                ra_ulid,
+                avatar,
+                hardcore_points,
+                retro_points,
+                refreshed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                canonical_username = excluded.canonical_username,
+                ra_ulid = excluded.ra_ulid,
+                avatar = excluded.avatar,
+                hardcore_points = excluded.hardcore_points,
+                retro_points = excluded.retro_points,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (
+                ra_username,
+                profile.get("username", ra_username),
+                profile.get("ulid"),
+                profile.get("avatar"),
+                profile.get("hardcore_points", 0),
+                profile.get("retro_points", 0),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def get_currently_playing_cache():
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ra_username, active, payload_json, refreshed_at
+            FROM currently_playing_cache
+            """
+        )
+        rows = {}
+        for row in cur.fetchall():
+            cached = dict(row)
+            payload = cached.get("payload_json")
+            cached["payload"] = json.loads(payload) if payload else None
+            rows[cached["ra_username"].lower()] = cached
+        return rows
+
+
+def save_currently_playing(ra_username: str, payload: dict | None):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO currently_playing_cache (ra_username, active, payload_json, refreshed_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                active = excluded.active,
+                payload_json = excluded.payload_json,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (
+                ra_username,
+                1 if payload else 0,
+                json.dumps(payload) if payload else None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+
+def achievement_poll_initialized(ra_username: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM achievement_poll_state WHERE ra_username = ?", (ra_username,))
+        return cur.fetchone() is not None
+
+
+def mark_achievement_poll_initialized(ra_username: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO achievement_poll_state (ra_username, initialized_at)
+            VALUES (?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                initialized_at = excluded.initialized_at
+            """,
+            (ra_username, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def achievement_unlock_seen(dedupe_key: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM processed_achievement_unlocks WHERE dedupe_key = ?", (dedupe_key,))
+        return cur.fetchone() is not None
+
+
+def save_processed_achievement_unlock(activity: dict, announced: bool):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO processed_achievement_unlocks (
+                dedupe_key,
+                ra_username,
+                achievement_id,
+                unlock_time,
+                announced,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dedupe_key) DO NOTHING
+            """,
+            (
+                activity["dedupe_key"],
+                activity["username"],
+                activity["achievement_id"],
+                activity["unlock_time_iso"],
+                1 if announced else 0,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def save_processed_achievement_unlocks(activities: list[dict], announced: bool):
+    if not activities:
+        return
+
+    processed_at = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO processed_achievement_unlocks (
+                dedupe_key,
+                ra_username,
+                achievement_id,
+                unlock_time,
+                announced,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dedupe_key) DO NOTHING
+            """,
+            [
+                (
+                    activity["dedupe_key"],
+                    activity["username"],
+                    activity["achievement_id"],
+                    activity["unlock_time_iso"],
+                    1 if announced else 0,
+                    processed_at,
+                )
+                for activity in activities
+            ],
+        )
+        conn.commit()
+
+
+
+def mastery_poll_initialized(ra_username: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM mastery_poll_state WHERE ra_username = ?", (ra_username,))
+        return cur.fetchone() is not None
+
+
+def mark_mastery_poll_initialized(ra_username: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO mastery_poll_state (ra_username, initialized_at)
+            VALUES (?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                initialized_at = excluded.initialized_at
+            """,
+            (ra_username, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def mastery_event_seen(dedupe_key: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM processed_mastery_events WHERE dedupe_key = ?", (dedupe_key,))
+        return cur.fetchone() is not None
+
+
+def save_processed_mastery_event(mastery: dict, announced: bool):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO processed_mastery_events (
+                dedupe_key,
+                ra_username,
+                game_id,
+                awarded_at,
+                announced,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dedupe_key) DO NOTHING
+            """,
+            (
+                mastery["dedupe_key"],
+                mastery["username"],
+                mastery["game_id"],
+                mastery["awarded_at"],
+                1 if announced else 0,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def save_processed_mastery_events(masteries: list[dict], announced: bool):
+    if not masteries:
+        return
+
+    processed_at = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO processed_mastery_events (
+                dedupe_key,
+                ra_username,
+                game_id,
+                awarded_at,
+                announced,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dedupe_key) DO NOTHING
+            """,
+            [
+                (
+                    mastery["dedupe_key"],
+                    mastery["username"],
+                    mastery["game_id"],
+                    mastery["awarded_at"],
+                    1 if announced else 0,
+                    processed_at,
+                )
+                for mastery in masteries
+            ],
+        )
+        conn.commit()
+
+
+def beaten_game_poll_initialized(ra_username: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM beaten_game_poll_state WHERE ra_username = ?", (ra_username,))
+        return cur.fetchone() is not None
+
+
+def mark_beaten_game_poll_initialized(ra_username: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO beaten_game_poll_state (ra_username, initialized_at)
+            VALUES (?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                initialized_at = excluded.initialized_at
+            """,
+            (ra_username, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def beaten_game_event_seen(ra_username: str, game_id: int) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM processed_beaten_game_events WHERE ra_username = ? AND game_id = ?",
+            (ra_username, game_id),
+        )
+        return cur.fetchone() is not None
+
+
+def save_processed_beaten_game_event(beaten_game: dict, announced: bool):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO processed_beaten_game_events (
+                ra_username,
+                game_id,
+                awarded_at,
+                announced,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username, game_id) DO NOTHING
+            """,
+            (
+                beaten_game["username"],
+                beaten_game["game_id"],
+                beaten_game["awarded_at"],
+                1 if announced else 0,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+
+
+def save_processed_beaten_game_events(beaten_games: list[dict], announced: bool):
+    if not beaten_games:
+        return
+
+    processed_at = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO processed_beaten_game_events (
+                ra_username,
+                game_id,
+                awarded_at,
+                announced,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username, game_id) DO NOTHING
+            """,
+            [
+                (
+                    beaten_game["username"],
+                    beaten_game["game_id"],
+                    beaten_game["awarded_at"],
+                    1 if announced else 0,
+                    processed_at,
+                )
+                for beaten_game in beaten_games
+            ],
+        )
+        conn.commit()
+
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (key, value, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def audio_enabled() -> bool:
+    return get_setting("audio_enabled", "1") == "1"
+
+
+def set_audio_enabled(enabled: bool):
+    set_setting("audio_enabled", "1" if enabled else "0")

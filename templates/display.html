@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements Display</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+  </head>
+  <body class="pi-display">
+    <main class="display-shell" data-display-rotation data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
+      <div class="display-carousel-track" data-carousel-track>
+      <section class="display-slide display-section is-active" data-slide="overall" data-duration="{{ display_section_durations.overall * 1000 }}">
+        <div class="display-slide-header">
+          <p>Overall Rankings</p>
+          <span>Total Hardcore Points</span>
+        </div>
+        <div class="display-list-viewport" data-scroll-list>
+          <ol class="display-list display-ranking-list">
+            {% for u in users %}
+              <li>
+                <b>{{ loop.index }}</b>
+                <span class="display-ranked-user">
+                  {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" />{% endif %}
+                  <span>{{ u.username }}</span>
+                </span>
+                <strong>{{ u.hardcore_display }}</strong>
+                <em>({{ u.retro_points_display }})</em>
+              </li>
+            {% else %}
+              <li class="display-empty">No tracked users yet.</li>
+            {% endfor %}
+          </ol>
+        </div>
+      </section>
+
+      <section class="display-slide display-section" data-slide="weekly" data-duration="{{ display_section_durations.weekly * 1000 }}">
+        <div class="display-slide-header">
+          <p>Weekly Rankings</p>
+          <span>Since {{ week_start_display }}</span>
+        </div>
+        <div class="display-list-viewport" data-scroll-list>
+          <ol class="display-list display-ranking-list">
+            {% for u in weekly_users %}
+              <li>
+                <b>{{ loop.index }}</b>
+                <span class="display-ranked-user">
+                  {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" />{% endif %}
+                  <span>{{ u.username }}</span>
+                </span>
+                <strong class="display-hc-points">+{{ u.weekly_hardcore_display }}</strong>
+                <em class="display-rp-points">(+{{ u.weekly_retro_points_display }})</em>
+              </li>
+            {% else %}
+              <li class="display-empty">No tracked users yet.</li>
+            {% endfor %}
+          </ol>
+        </div>
+      </section>
+
+      {% for player in currently_playing_users %}
+        <section class="display-slide display-section display-current" data-slide="current" data-duration="{{ display_section_durations.current * 1000 }}">
+          <div class="display-slide-header">
+            <p>Currently Playing</p>
+            <span>{{ player.username }}</span>
+          </div>
+          <article class="display-player">
+            {% if player.game_image %}
+              <img src="{{ player.game_image }}" alt="{{ player.game_title }}" class="display-game-image" />
+            {% endif %}
+            <div>
+              <div class="display-user-row">
+                {% if player.avatar %}<img src="{{ player.avatar }}" alt="{{ player.username }} avatar" class="avatar" />{% endif %}
+                <span>{{ player.username }}</span>
+              </div>
+              <h1>{{ player.game_title }}</h1>
+              <p>{{ player.rich_presence }}</p>
+              <div class="display-stats">
+                <strong>{{ player.hardcore_achievements }} / {{ player.total_achievements }} achievements</strong>
+                <strong>{{ player.completion_percentage }}%</strong>
+                <strong class="display-points-stat">{{ player.hardcore_points_display }} / {{ player.total_points_display }}</strong>
+              </div>
+            </div>
+          </article>
+        </section>
+      {% endfor %}
+
+      <section class="display-slide display-section" data-slide="recent" data-duration="{{ display_section_durations.recent * 1000 }}">
+        <div class="display-slide-header">
+          <p>Recent Activity</p>
+          <span>Latest Hardcore Unlocks</span>
+        </div>
+        <div class="display-activity-list">
+          {% for activity in recent_activity %}
+            <article>
+              {% if activity.achievement_badge %}<img src="{{ activity.achievement_badge }}" alt="{{ activity.achievement_title }} badge" />{% endif %}
+              <div>
+                <strong>{{ activity.username }}</strong>
+                <span>{{ activity.achievement_title }}</span>
+                <em class="display-activity-meta">
+                  {{ activity.game_title }} ·
+                  <span class="display-hc-points">{{ activity.points_display }}</span>
+                  {% if activity.retro_points %} · <span class="display-rp-points">({{ activity.retro_points_display }})</span>{% endif %}
+                  · {{ activity.unlock_time_display }}
+                </em>
+              </div>
+            </article>
+          {% else %}
+            <div class="display-empty">No recent Hardcore achievements.</div>
+          {% endfor %}
+        </div>
+      </section>
+      </div>
+    </main>
+
+    <aside class="achievement-notification" data-achievement-notification aria-live="polite">
+      <div class="achievement-notification-shell">
+        <div class="achievement-notification-heading">
+          <span data-achievement-heading>Achievement Unlocked</span>
+          <strong data-achievement-mode>Hardcore</strong>
+        </div>
+        <div class="achievement-notification-main">
+          <img class="achievement-notification-badge" data-achievement-badge alt="" hidden />
+          <div class="achievement-notification-copy">
+            <div class="achievement-notification-user">
+              <img data-achievement-user-avatar alt="" hidden />
+              <span data-achievement-username></span>
+            </div>
+            <h1 data-achievement-title></h1>
+            <p data-achievement-description></p>
+            <div class="achievement-notification-meta">
+              <span data-achievement-game></span>
+              <strong data-achievement-points></strong>
+              <em data-achievement-retro-points></em>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <script src="/static/js/display.js?v={{ display_js_version }}"></script>
+  </body>
+</html>

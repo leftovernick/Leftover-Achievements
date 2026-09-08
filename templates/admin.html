@@ -3,53 +3,125 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>LeftoverAchievements — Admin</title>
+    <title>LeftoverAchievements Settings</title>
     <link rel="stylesheet" href="/static/css/styles.css" />
   </head>
-  <body>
-    <header>
-      <h1>Admin — Tracked Users</h1>
-      <a href="/">Dashboard</a>
+  <body class="web-dashboard admin-page">
+    <header class="top-nav">
+      <a href="/" class="brand">LeftoverAchievements</a>
+      <nav aria-label="Main navigation">
+        <a href="/">Dashboard</a>
+        <span class="disabled">Activity</span>
+        <a href="/users">Users</a>
+        <span class="disabled">History</span>
+        <a href="/display">Display</a>
+        <a href="/admin" class="active">Settings</a>
+      </nav>
     </header>
-    <main class="container">
+
+    <main class="dashboard-shell settings-shell">
+      <section class="dashboard-hero panel">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h1>Display Settings</h1>
+        </div>
+        <a href="/display" class="action-link">View Display</a>
+      </section>
+
       {% if message %}
         <div class="message">{{ message }}</div>
       {% endif %}
 
-      <section class="add-user">
-        <h2>Add RetroAchievements User</h2>
-        <form method="post" action="/admin/add">
-          <input name="username" placeholder="RetroAchievements username" required />
-          <button type="submit">Add</button>
+      <section class="panel display-settings">
+        <div class="panel-header">
+          <h2>Display Settings</h2>
+        </div>
+        <form method="post" action="/admin/settings" class="settings-form" enctype="multipart/form-data">
+          <div class="display-settings-group">
+            <h3>Display Rotation</h3>
+            <div class="duration-slider-stack">
+              {% for section, label in [('overall', 'Overall Rankings'), ('weekly', 'Weekly Rankings'), ('current', 'Currently Playing'), ('recent', 'Recent Activity')] %}
+                <label class="duration-slider-setting">
+                  <span>{{ label }} <output data-section-duration-output="{{ section }}">{{ display_section_durations[section] }}s</output></span>
+                  <input
+                    type="range"
+                    name="{{ section }}_section_duration"
+                    min="5"
+                    max="180"
+                    step="5"
+                    value="{{ display_section_durations[section] }}"
+                    data-section-duration-slider="{{ section }}"
+                  />
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="display-settings-group">
+            <h3>Popup Duration</h3>
+            <div class="duration-slider-stack">
+              {% for kind, label in [('achievement', 'Achievement'), ('beaten', 'Game Beaten'), ('mastery', 'Mastery')] %}
+                <label class="duration-slider-setting">
+                  <span>{{ label }} <output data-duration-output="{{ kind }}">{{ notification_durations[kind] }}s</output></span>
+                  <input
+                    type="range"
+                    name="{{ kind }}_duration"
+                    min="1"
+                    max="15"
+                    step="1"
+                    value="{{ notification_durations[kind] }}"
+                    data-duration-slider="{{ kind }}"
+                  />
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="display-settings-group">
+            <div class="display-settings-group-header">
+              <h3>Custom Alert Audio</h3>
+              <label class="checkbox-setting">
+                <input type="checkbox" name="audio_enabled" value="1" {% if audio_enabled %}checked{% endif %} />
+                <span>Enable popup audio</span>
+              </label>
+            </div>
+            <div class="audio-upload-stack">
+              {% for kind, label in [('achievement', 'Achievement'), ('beaten', 'Game Beaten'), ('mastery', 'Mastery')] %}
+                <label class="audio-upload-setting">
+                  <span>{{ label }} sound{% if audio_sources.get(kind) %} · custom active{% endif %}</span>
+                  <input type="file" name="{{ kind }}_audio" accept="audio/mpeg,audio/wav,audio/ogg,.mp3,.wav,.ogg" />
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+          <button type="submit">Save Settings</button>
         </form>
       </section>
 
-      <section class="tracked">
-        <h2>Currently Tracked</h2>
-        <table>
-          <thead><tr><th>ID</th><th>Username</th><th>ULID</th><th>Added</th><th>Action</th></tr></thead>
-          <tbody>
-            {% for u in users %}
-            <tr>
-              <td>{{ u.id }}</td>
-              <td>{{ u.ra_username }}</td>
-              <td>{{ u.ra_ulid or "-" }}</td>
-              <td>{{ u.created_at }}</td>
-              <td>
-                <form method="post" action="/admin/remove" style="display:inline">
-                  <input type="hidden" name="user_id" value="{{ u.id }}" />
-                  <button type="submit">Remove</button>
-                </form>
-              </td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="5" class="empty">No tracked users yet.</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <section class="panel display-settings">
+        <div class="panel-header">
+          <h2>Test Display Alerts</h2>
+          <span>Requires an open Display page</span>
+        </div>
+        <div class="test-alert-actions">
+          <form method="post" action="/admin/test-alert/achievement"><button type="submit">Test Achievement</button></form>
+          <form method="post" action="/admin/test-alert/beaten"><button type="submit">Test Game Beaten</button></form>
+          <form method="post" action="/admin/test-alert/mastery"><button type="submit">Test Mastery</button></form>
+        </div>
       </section>
+
     </main>
+    <script>
+      document.querySelectorAll('[data-duration-slider]').forEach((slider) => {
+        const output = document.querySelector(`[data-duration-output="${slider.dataset.durationSlider}"]`);
+        const update = () => { output.textContent = `${slider.value}s`; };
+        slider.addEventListener('input', update);
+        update();
+      });
+      document.querySelectorAll('[data-section-duration-slider]').forEach((slider) => {
+        const output = document.querySelector(`[data-section-duration-output="${slider.dataset.sectionDurationSlider}"]`);
+        const update = () => { output.textContent = `${slider.value}s`; };
+        slider.addEventListener('input', update);
+        update();
+      });
+    </script>
   </body>
 </html>
