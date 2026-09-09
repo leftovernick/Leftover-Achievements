@@ -79,6 +79,7 @@ class ApplicationUpdater:
             "current_commit": None,
             "current": None,
             "runtime_mode": runtime_environment.mode.value if runtime_environment else "source",
+            "runtime_architecture": runtime_environment.architecture if runtime_environment else None,
             "install_supported": runtime_environment.supports_self_update if runtime_environment else True,
             "install_unavailable_reason": self._install_unavailable_reason(),
             "update_available": False,

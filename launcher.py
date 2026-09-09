@@ -28,6 +28,26 @@ def configure_logging() -> logging.Logger:
     return logging.getLogger("leftover-achievements.launcher")
 
 
+def backend_urls() -> tuple[str, str | None]:
+    local_url = f"http://127.0.0.1:{runtime.port}/"
+    lan_ip = detect_lan_ip()
+    lan_url = f"http://{lan_ip}:{runtime.port}/" if lan_ip else None
+    return local_url, lan_url
+
+
+def create_backend_server() -> uvicorn.Server:
+    from app import app
+
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=runtime.port,
+        reload=False,
+        log_config=None,
+    )
+    return uvicorn.Server(config)
+
+
 def main() -> int:
     logger = configure_logging()
     try:
@@ -45,25 +65,15 @@ def main() -> int:
         instance_lock.release()
         return 0
 
-    local_url = f"http://127.0.0.1:{runtime.port}/"
-    lan_ip = detect_lan_ip()
+    local_url, lan_url = backend_urls()
     logger.info("Starting LeftoverAchievements (%s).", runtime.mode.value)
     logger.info("Dashboard: %s", local_url)
-    if lan_ip:
-        logger.info("LAN dashboard: http://%s:%s/", lan_ip, runtime.port)
+    if lan_url:
+        logger.info("LAN dashboard: %s", lan_url)
     logger.info("Persistent data: %s", runtime.data_dir)
 
     try:
-        from app import app
-
-        config = uvicorn.Config(
-            app,
-            host="0.0.0.0",
-            port=runtime.port,
-            reload=False,
-            log_config=None,
-        )
-        uvicorn.Server(config).run()
+        create_backend_server().run()
     except KeyboardInterrupt:
         logger.info("Shutdown requested.")
     except Exception:

@@ -17,6 +17,8 @@ jobs:
     if: github.event.release.draft == false && github.event.release.prerelease == false
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      MACOS_ARCH: arm64
     steps:
       - name: Check out the release tag
         uses: actions/checkout@v7
@@ -70,10 +72,10 @@ jobs:
       - name: Smoke-test frozen server
         shell: bash
         run: |
-          artifact="LeftoverAchievements-macOS-arm64-$RELEASE_TAG"
+          artifact="LeftoverAchievements-macOS-$MACOS_ARCH-$RELEASE_TAG"
           executable="dist/$artifact.app/Contents/MacOS/$artifact"
           test -x "$executable"
-          export LEFTOVER_DATA_DIR="$RUNNER_TEMP/leftover-smoke-macos"
+          export LEFTOVER_DATA_DIR="$RUNNER_TEMP/leftover-smoke-macos-$MACOS_ARCH"
           export LEFTOVER_PORT=18765
           "$executable" &
           server_pid=$!
@@ -95,14 +97,110 @@ jobs:
             sleep 1
           done
           test -s "$RUNNER_TEMP/update-status.json"
-          python -c 'import json, os; from pathlib import Path; payload=json.loads(Path(os.environ["RUNNER_TEMP"], "update-status.json").read_text()); assert payload["installed_version"] == os.environ["RELEASE_TAG"], payload'
+          python -c 'import json, os; from pathlib import Path; payload=json.loads(Path(os.environ["RUNNER_TEMP"], "update-status.json").read_text()); assert payload["installed_version"] == os.environ["RELEASE_TAG"], payload; assert payload["runtime_architecture"] == os.environ["MACOS_ARCH"], payload'
 
       - name: Attach macOS ZIP to this release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          asset="dist/releases/LeftoverAchievements-macOS-arm64-$RELEASE_TAG.zip"
+          asset="dist/releases/LeftoverAchievements-macOS-$MACOS_ARCH-$RELEASE_TAG.zip"
+          test -s "$asset"
+          gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
+
+  macos-x64:
+    name: macOS x64 package
+    if: github.event.release.draft == false && github.event.release.prerelease == false
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    env:
+      MACOS_ARCH: x64
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Create clean build environment and install dependencies
+        shell: bash
+        run: |
+          python -m venv .venv
+          export PATH="$PWD/.venv/bin:$PATH"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-build.txt
+
+      - name: Diagnose macOS Python environment
+        shell: bash
+        run: |
+          python -m pip show packaging
+          python -c 'import sys; print(sys.executable); print(sys.path)'
+          python -c 'import packaging; print(packaging.__file__)'
+          python -c 'from packaging.version import Version; print(Version("0.1.0"))'
+          python -c 'import sys; from pathlib import Path; expected=Path(".venv/bin/python").resolve(); actual=Path(sys.executable).resolve(); assert actual == expected, f"Expected {expected}, got {actual}"'
+
+      - name: Verify stable release tag and exact source revision
+        shell: bash
+        run: |
+          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
+          test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
+
+      - name: Build and validate package
+        shell: bash
+        env:
+          LEFTOVER_BUILD_VERSION: ${{ env.RELEASE_TAG }}
+        run: ./scripts/build-macos.sh
+
+      - name: Smoke-test frozen server
+        shell: bash
+        run: |
+          artifact="LeftoverAchievements-macOS-$MACOS_ARCH-$RELEASE_TAG"
+          executable="dist/$artifact.app/Contents/MacOS/$artifact"
+          test -x "$executable"
+          export LEFTOVER_DATA_DIR="$RUNNER_TEMP/leftover-smoke-macos-$MACOS_ARCH"
+          export LEFTOVER_PORT=18765
+          "$executable" &
+          server_pid=$!
+          cleanup() {
+            kill -TERM "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error \
+              "http://127.0.0.1:$LEFTOVER_PORT/api/update/status" \
+              --output "$RUNNER_TEMP/update-status.json"; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "Frozen server exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          test -s "$RUNNER_TEMP/update-status.json"
+          python -c 'import json, os; from pathlib import Path; payload=json.loads(Path(os.environ["RUNNER_TEMP"], "update-status.json").read_text()); assert payload["installed_version"] == os.environ["RELEASE_TAG"], payload; assert payload["runtime_architecture"] == os.environ["MACOS_ARCH"], payload'
+
+      - name: Attach macOS ZIP to this release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="dist/releases/LeftoverAchievements-macOS-$MACOS_ARCH-$RELEASE_TAG.zip"
           test -s "$asset"
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
 

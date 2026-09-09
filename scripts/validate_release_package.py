@@ -37,14 +37,28 @@ def stable_version(value: str) -> Version:
     return version
 
 
-def expected_artifact_name(platform: str, version: str) -> str:
-    architecture = "macOS-arm64" if platform == "macos" else "Windows-x64"
-    return f"LeftoverAchievements-{architecture}-{version}"
+def expected_artifact_name(
+    platform: str, version: str, architecture: str | None = None
+) -> str:
+    if platform == "macos":
+        if architecture not in {"arm64", "x64"}:
+            raise ValueError("macOS release packages require architecture arm64 or x64")
+        platform_architecture = f"macOS-{architecture}"
+    else:
+        if architecture not in {None, "x64"}:
+            raise ValueError("Windows release packages currently require architecture x64")
+        platform_architecture = "Windows-x64"
+    return f"LeftoverAchievements-{platform_architecture}-{version}"
 
 
-def validate_archive(platform: str, version: str, archive: Path) -> None:
+def validate_archive(
+    platform: str,
+    version: str,
+    archive: Path,
+    architecture: str | None = None,
+) -> None:
     stable_version(version)
-    artifact_name = expected_artifact_name(platform, version)
+    artifact_name = expected_artifact_name(platform, version, architecture)
     expected_archive = f"{artifact_name}.zip"
     if archive.name != expected_archive:
         raise ValueError(f"Expected archive name {expected_archive!r}, got {archive.name!r}")
@@ -83,6 +97,23 @@ def validate_archive(platform: str, version: str, archive: Path) -> None:
             )
 
         if platform == "macos":
+            architecture_metadata = PurePosixPath(
+                expected_root, "Contents", "Resources", "build-architecture.txt"
+            )
+            if architecture_metadata not in names:
+                raise ValueError(
+                    f"Archive does not contain architecture metadata at {architecture_metadata}"
+                )
+            embedded_architecture = (
+                package.read(str(architecture_metadata)).decode("utf-8").strip()
+            )
+            if embedded_architecture != architecture:
+                raise ValueError(
+                    "Embedded architecture mismatch: "
+                    f"expected {architecture!r}, got {embedded_architecture!r}"
+                )
+
+        if platform == "macos":
             executable_suffix = f"Contents/MacOS/{artifact_name}"
         else:
             executable_suffix = f"{artifact_name}.exe"
@@ -93,11 +124,12 @@ def validate_archive(platform: str, version: str, archive: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", choices=("macos", "windows"), required=True)
+    parser.add_argument("--architecture", choices=("arm64", "x64"))
     parser.add_argument("--version", required=True)
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     try:
-        validate_archive(args.platform, args.version, args.archive)
+        validate_archive(args.platform, args.version, args.archive, args.architecture)
     except (OSError, UnicodeError, ValueError, zipfile.BadZipFile) as exc:
         print(f"Release package validation failed: {exc}", file=sys.stderr)
         return 1

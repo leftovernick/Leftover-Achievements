@@ -53,11 +53,15 @@ After setup, the main pages are:
 ## Packaged desktop server
 
 The macOS and Windows packages include Python and all runtime dependencies. They run
-LeftoverAchievements as a headless local server: no kiosk, application window, or
-automatically opened browser. After launching the package, open
-http://127.0.0.1:8000/ yourself. Other devices on the same trusted LAN can use the
-LAN address recorded in the application log. `/display` remains available when a
-desktop user intentionally opens it.
+LeftoverAchievements as a local server without kiosk mode, a dashboard window, or an
+automatically opened browser. On macOS, launching the app creates a native monochrome
+trophy in the menu bar and no Dock icon. Its menu reports server and update status,
+opens the Dashboard or Display in the default browser, copies the preferred LAN
+address, checks for updates, and quits the backend cleanly. Windows continues to run
+as a headless server. Open http://127.0.0.1:8000/ yourself on Windows, or use the
+macOS menu command. Other devices on the same trusted LAN can use the LAN address
+recorded in the application log. `/display` remains available when a desktop user
+intentionally opens it.
 
 First launch uses the same browser-based onboarding as the Pi. The API key, users,
 settings, history, custom audio, and database are persisted outside the package:
@@ -68,7 +72,9 @@ settings, history, custom audio, and database are persisted outside the package:
 Rotating logs are stored in the `logs` subdirectory as
 `leftover-achievements.log`. The log records the localhost URL, detected LAN URL,
 startup errors, and shutdown without recording API keys. Launching a second copy
-exits cleanly when the instance lock or server port is already owned.
+exits cleanly when the instance lock is already owned. On macOS, a backend startup
+failure leaves the menu bar app available with `Server: Failed` instead of appearing
+as an unresponsive foreground app.
 
 Packaged builds can check GitHub Releases and show newer versions. Self-replacement
 is deliberately not implemented yet: **Update Now** is hidden and Settings explains
@@ -83,6 +89,20 @@ Install the build-only dependencies in the project virtual environment:
 pip install -r requirements-build.txt
 ```
 
+On macOS, the runtime requirements install PyObjC/AppKit. To exercise the menu bar
+wrapper without building an `.app`, use packaged-style data isolation on a free port:
+
+```bash
+LEFTOVER_RUNTIME_MODE=macos_packaged \
+LEFTOVER_PORT=8000 \
+python macos_menu.py
+```
+
+This does not replace the normal `uvicorn` development command. The wrapper does not
+open a browser automatically; choose **Open Dashboard** or **Open Display** from its
+menu. Its status icon uses the system `trophy.fill` symbol as a template image, so no
+separate colored menu-bar asset is required and macOS adapts it for light/dark menus.
+
 Build on the target operating system; PyInstaller does not cross-compile. Both build
 scripts derive the version from the exact Git tag at HEAD. CI or a test build may
 instead provide `LEFTOVER_BUILD_VERSION=v1.2.0`; end users never edit a version file.
@@ -90,10 +110,10 @@ The PyInstaller definitions live in `packaging_specs/macos.spec` and
 `packaging_specs/windows.spec`; the directory deliberately avoids the name of the
 third-party Python `packaging` dependency used for release-version validation.
 
-On an Apple Silicon Mac:
+On an Apple Silicon Mac, build the native arm64 package:
 
 ```bash
-./scripts/build-macos.sh
+MACOS_ARCH=arm64 ./scripts/build-macos.sh
 ```
 
 This produces
@@ -102,6 +122,23 @@ runs without a main window or Dock icon. It is not Developer ID signed or notari
 so downloaded builds may require **Control-click → Open** in Finder or approval in
 **System Settings → Privacy & Security**. Signing and notarization are intentionally
 deferred.
+
+On an Intel Mac, build the native x64 package instead:
+
+```bash
+MACOS_ARCH=x64 ./scripts/build-macos.sh
+```
+
+This produces
+`dist/releases/LeftoverAchievements-macOS-x64-v1.2.0.zip`. The build script refuses
+to cross-compile: `arm64` must run on Apple Silicon and `x64` must run on Intel.
+
+Choose the macOS download that matches the computer:
+
+- Macs with M1, M2, M3, M4, or newer Apple Silicon use the **macOS arm64** ZIP.
+- Macs with an Intel processor use the **macOS x64** ZIP.
+
+These are separate native builds, not a combined universal2 application.
 
 On Windows x64, run PowerShell from the repository:
 
@@ -119,11 +156,13 @@ has no console window. For startup diagnosis, build a console-enabled variant wi
 
 Publishing a stable GitHub Release automatically invokes these same scripts in the
 `Build packaged release assets` workflow. Independent native jobs build Apple
-Silicon macOS on `macos-15` and Windows x64 on `windows-latest`. Each job checks out
-the Release tag explicitly, embeds that exact tag, validates the ZIP contents and
-frozen server, and attaches one predictably named asset to the same Release:
+Silicon macOS on `macos-15`, Intel macOS on `macos-15-intel`, and Windows x64 on
+`windows-latest`. Each job checks out the Release tag explicitly, embeds that exact
+tag, validates the ZIP contents and frozen server, and attaches one predictably named
+asset to the same Release:
 
 - `LeftoverAchievements-macOS-arm64-v1.2.0.zip`
+- `LeftoverAchievements-macOS-x64-v1.2.0.zip`
 - `LeftoverAchievements-Windows-x64-v1.2.0.zip`
 
 Rerunning a job replaces its existing same-named asset. A failed job uploads
@@ -304,8 +343,9 @@ When a build is ready for users:
 5. Target the desired commit (normally the verified commit on `main`).
 6. Write the human-authored release title and notes.
 7. Leave **Set as a pre-release** off, then publish the Release.
-8. Open the **Actions** tab and follow both native package jobs.
-9. Confirm that the macOS arm64 and Windows x64 ZIPs appear under the same Release.
+8. Open the **Actions** tab and follow all three native package jobs.
+9. Confirm that the macOS arm64, macOS x64, and Windows x64 ZIPs appear under the
+   same Release.
 10. Installed LeftoverAchievements devices detect that stable published version.
 
 Publishing the Release is the explicit **ship this version** action. Ordinary commits

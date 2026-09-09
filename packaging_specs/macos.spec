@@ -8,17 +8,19 @@ from PyInstaller.utils.hooks import collect_submodules
 project_root = Path(SPECPATH).parent
 artifact_name = os.environ["LEFTOVER_ARTIFACT_NAME"]
 version_file = os.environ["LEFTOVER_BUILD_VERSION_FILE"]
+architecture_file = os.environ["LEFTOVER_BUILD_ARCHITECTURE_FILE"]
 
 a = Analysis(
-    [str(project_root / "launcher.py")],
+    [str(project_root / "macos_menu.py")],
     pathex=[str(project_root)],
     binaries=[],
     datas=[
         (str(project_root / "templates"), "templates"),
         (str(project_root / "static"), "static"),
         (version_file, "."),
+        (architecture_file, "."),
     ],
-    hiddenimports=collect_submodules("uvicorn"),
+    hiddenimports=collect_submodules("uvicorn") + ["AppKit", "Foundation", "objc"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -38,7 +40,6 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    target_arch="arm64",
 )
 collection = COLLECT(
     exe,
@@ -53,7 +54,10 @@ app = BUNDLE(
     name=f"{artifact_name}.app",
     bundle_identifier="com.leftoverachievements.server",
     info_plist={
+        "CFBundleName": "LeftoverAchievements",
         "CFBundleDisplayName": "LeftoverAchievements",
+        "CFBundleShortVersionString": Path(version_file).read_text().strip().lstrip("v"),
+        "CFBundleVersion": Path(version_file).read_text().strip().lstrip("v"),
         "LSUIElement": True,
         "NSHighResolutionCapable": True,
     },

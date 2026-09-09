@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import socket
 import sys
 from dataclasses import dataclass
@@ -87,6 +88,7 @@ class RuntimeEnvironment:
     logs_dir: Path
     mutable_audio_dir: Path
     installed_version: str | None
+    architecture: str
     github_repository: str = GITHUB_REPOSITORY
     port: int = DEFAULT_PORT
 
@@ -142,7 +144,9 @@ class RuntimeEnvironment:
 
     def release_asset_name(self, version: str) -> str | None:
         if self.mode is RuntimeMode.MACOS_PACKAGED:
-            return f"{APP_NAME}-macOS-arm64-{version}.zip"
+            if self.architecture not in {"arm64", "x64"}:
+                return None
+            return f"{APP_NAME}-macOS-{self.architecture}-{version}.zip"
         if self.mode is RuntimeMode.WINDOWS_PACKAGED:
             return f"{APP_NAME}-Windows-x64-{version}.zip"
         return None
@@ -205,6 +209,28 @@ def _packaged_version(resource_root: Path, mode: RuntimeMode) -> str | None:
     return value or None
 
 
+def normalize_architecture(machine: str) -> str:
+    normalized = machine.strip().lower()
+    if normalized in {"arm64", "aarch64"}:
+        return "arm64"
+    if normalized in {"x64", "x86_64", "amd64"}:
+        return "x64"
+    return normalized or "unknown"
+
+
+def _runtime_architecture(resource_root: Path, mode: RuntimeMode) -> str:
+    if mode in {RuntimeMode.MACOS_PACKAGED, RuntimeMode.WINDOWS_PACKAGED}:
+        try:
+            embedded = (resource_root / "build-architecture.txt").read_text(
+                encoding="utf-8"
+            ).strip()
+        except OSError:
+            embedded = ""
+        if embedded:
+            return normalize_architecture(embedded)
+    return normalize_architecture(platform.machine())
+
+
 def detect_lan_ip() -> str | None:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -244,6 +270,7 @@ def detect_runtime() -> RuntimeEnvironment:
         logs_dir=data / "logs",
         mutable_audio_dir=mutable_audio,
         installed_version=_packaged_version(resources, mode),
+        architecture=_runtime_architecture(resources, mode),
         port=port,
     )
 

@@ -98,6 +98,7 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             logs_dir=data / "logs",
             mutable_audio_dir=data / "audio",
             installed_version="v1.1.0",
+            architecture="arm64",
         )
 
         async def fetch_release(_repository: str):
@@ -106,7 +107,11 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
                     "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/package.zip",
-                }
+                },
+                {
+                    "name": "LeftoverAchievements-macOS-x64-v1.2.0.zip",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/x64.zip",
+                },
             ]
             return payload
 
@@ -124,8 +129,49 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             state["latest_release_asset_name"],
             "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
         )
+        self.assertTrue(state["latest_release_asset_url"].endswith("/package.zip"))
+        self.assertEqual(state["runtime_architecture"], "arm64")
         with self.assertRaisesRegex(UpdateError, "not yet supported"):
             await updater.install()
+
+    async def test_intel_macos_build_selects_only_x64_release_asset(self):
+        data = self.root / "data"
+        environment = RuntimeEnvironment(
+            mode=RuntimeMode.MACOS_PACKAGED,
+            resource_root=self.root,
+            data_dir=data,
+            logs_dir=data / "logs",
+            mutable_audio_dir=data / "audio",
+            installed_version="v1.1.0",
+            architecture="x64",
+        )
+
+        async def fetch_release(_repository: str):
+            payload = release("v1.2.0")
+            payload["assets"] = [
+                {
+                    "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/arm64.zip",
+                },
+                {
+                    "name": "LeftoverAchievements-macOS-x64-v1.2.0.zip",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/x64.zip",
+                },
+            ]
+            return payload
+
+        updater = ApplicationUpdater(
+            self.root,
+            repository="example/project",
+            release_fetcher=fetch_release,
+            runtime_environment=environment,
+        )
+        state = await updater.check()
+        self.assertEqual(
+            state["latest_release_asset_name"],
+            "LeftoverAchievements-macOS-x64-v1.2.0.zip",
+        )
+        self.assertTrue(state["latest_release_asset_url"].endswith("/x64.zip"))
 
 
 if __name__ == "__main__":
