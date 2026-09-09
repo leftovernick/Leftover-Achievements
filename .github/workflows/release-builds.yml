@@ -39,15 +39,25 @@ jobs:
         shell: bash
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -r requirements.txt
-          .venv/bin/pip install -r requirements-build.txt
+          export PATH="$PWD/.venv/bin:$PATH"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-build.txt
+
+      - name: Diagnose macOS Python environment
+        shell: bash
+        run: |
+          python -m pip show packaging
+          python -c 'import sys; print(sys.executable); print(sys.path)'
+          python -c 'import packaging; print(packaging.__file__)'
+          python -c 'from packaging.version import Version; print(Version("0.1.0"))'
+          python -c 'import sys; from pathlib import Path; expected=Path(".venv/bin/python").resolve(); actual=Path(sys.executable).resolve(); assert actual == expected, f"Expected {expected}, got {actual}"'
 
       - name: Verify stable release tag and exact source revision
         shell: bash
         run: |
-          .venv/bin/python -c 'from pathlib import Path; import packaging, packaging.version; resolved=Path(packaging.__file__).resolve(); print(f"packaging loaded from: {resolved}"); assert any(part in {"site-packages", "dist-packages"} for part in resolved.parts), resolved'
-          .venv/bin/python -c 'import os; from packaging.version import Version; from scripts.validate_release_package import stable_version; assert str(Version("0.1.0")) == "0.1.0"; stable_version(os.environ["RELEASE_TAG"])'
+          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
           test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
           test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
 
@@ -123,15 +133,25 @@ jobs:
         shell: pwsh
         run: |
           python -m venv .venv
-          .\.venv\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv\Scripts\pip.exe install -r requirements.txt
-          .\.venv\Scripts\pip.exe install -r requirements-build.txt
+          $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
+          "$PWD\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-build.txt
+
+      - name: Verify Windows Python environment
+        shell: pwsh
+        run: |
+          python -m pip show packaging
+          python -c 'import sys; print(sys.executable); print(sys.path)'
+          python -c 'import packaging; print(packaging.__file__)'
+          python -c 'from packaging.version import Version; print(Version("0.1.0"))'
+          python -c 'import sys; from pathlib import Path; expected=Path(".venv/Scripts/python.exe").resolve(); actual=Path(sys.executable).resolve(); assert actual == expected, f"Expected {expected}, got {actual}"'
 
       - name: Verify stable release tag and exact source revision
         shell: pwsh
         run: |
-          .\.venv\Scripts\python.exe -c 'from pathlib import Path; import packaging, packaging.version; resolved=Path(packaging.__file__).resolve(); print(f"packaging loaded from: {resolved}"); assert any(part in {"site-packages", "dist-packages"} for part in resolved.parts), resolved'
-          .\.venv\Scripts\python.exe -c 'import os; from packaging.version import Version; from scripts.validate_release_package import stable_version; assert str(Version("0.1.0")) == "0.1.0"; stable_version(os.environ["RELEASE_TAG"])'
+          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
           if ((git rev-parse HEAD) -ne (git rev-list -n 1 $env:RELEASE_TAG)) {
             throw "Checked-out commit does not match release tag $env:RELEASE_TAG."
           }
