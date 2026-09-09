@@ -35,20 +35,20 @@ jobs:
             requirements.txt
             requirements-build.txt
 
-      - name: Verify stable release tag and exact source revision
-        shell: bash
-        run: |
-          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
-          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
-          test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
-
-      - name: Create clean build environment
+      - name: Create clean build environment and install dependencies
         shell: bash
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
           .venv/bin/pip install -r requirements-build.txt
+
+      - name: Verify stable release tag and exact source revision
+        shell: bash
+        run: |
+          .venv/bin/python -c 'import os; from packaging.version import Version; from scripts.validate_release_package import stable_version; assert str(Version("0.1.0")) == "0.1.0"; stable_version(os.environ["RELEASE_TAG"])'
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
+          test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
 
       - name: Build and validate package
         shell: bash
@@ -118,24 +118,24 @@ jobs:
             requirements.txt
             requirements-build.txt
 
-      - name: Verify stable release tag and exact source revision
-        shell: pwsh
-        run: |
-          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
-          if ((git rev-parse HEAD) -ne (git rev-list -n 1 $env:RELEASE_TAG)) {
-            throw "Checked-out commit does not match release tag $env:RELEASE_TAG."
-          }
-          if ((git tag --points-at HEAD --list $env:RELEASE_TAG) -ne $env:RELEASE_TAG) {
-            throw "HEAD is not tagged with release tag $env:RELEASE_TAG."
-          }
-
-      - name: Create clean build environment
+      - name: Create clean build environment and install dependencies
         shell: pwsh
         run: |
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\pip.exe install -r requirements.txt
           .\.venv\Scripts\pip.exe install -r requirements-build.txt
+
+      - name: Verify stable release tag and exact source revision
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -c 'import os; from packaging.version import Version; from scripts.validate_release_package import stable_version; assert str(Version("0.1.0")) == "0.1.0"; stable_version(os.environ["RELEASE_TAG"])'
+          if ((git rev-parse HEAD) -ne (git rev-list -n 1 $env:RELEASE_TAG)) {
+            throw "Checked-out commit does not match release tag $env:RELEASE_TAG."
+          }
+          if ((git tag --points-at HEAD --list $env:RELEASE_TAG) -ne $env:RELEASE_TAG) {
+            throw "HEAD is not tagged with release tag $env:RELEASE_TAG."
+          }
 
       - name: Build and validate package
         shell: pwsh
