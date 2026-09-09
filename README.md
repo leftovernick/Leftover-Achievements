@@ -169,5 +169,31 @@ sudo systemctl restart leftover-achievements
 journalctl -u leftover-achievements
 ```
 
+### Application updates
+
+The backend checks `origin/main` every five minutes and caches the result. These
+checks only run `git fetch`; they never install an update. When an update is
+available, use **Settings → Application Update** from the web dashboard or swipe
+down from the top edge of the touchscreen and choose **Update**. The installer
+requires a clean tracked worktree and the `main` branch, performs a fast-forward
+only merge, updates `.venv` from `requirements.txt`, and restarts only the backend
+service. Ignored files such as `.env`, the SQLite database, and updater logs are not
+modified.
+
+The normal service user needs permission to restart this one service. Edit the
+included sudoers template, validate it, and install it with restrictive permissions:
+
+```bash
+sed "s/YOUR_USER/$USER/g" deploy/leftover-achievements-update.sudoers | sudo tee /etc/sudoers.d/leftover-achievements-update >/dev/null
+sudo chmod 0440 /etc/sudoers.d/leftover-achievements-update
+sudo visudo -cf /etc/sudoers.d/leftover-achievements-update
+```
+
+The rule permits only `/usr/bin/systemctl restart leftover-achievements.service`;
+it does not grant general passwordless sudo. Confirm that `command -v systemctl`
+prints `/usr/bin/systemctl` on the Pi before installing the template. Update progress
+is logged to `.update.log`. A failed update leaves persisted application data alone
+and reports the last log message in both interfaces.
+
 After moving the repository, update the paths in the installed systemd unit and labwc
 autostart entry, then run `sudo systemctl daemon-reload` and restart the service.

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Settings</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=api-key-2" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=app-updates-1" />
   </head>
   <body class="web-dashboard admin-page">
     <header class="top-nav">
@@ -80,6 +80,25 @@
           <form method="post" action="/admin/reset-onboarding" onsubmit="return confirm('Run the setup guide again? Your players, history, and API key will be kept.');">
             <button type="submit" class="secondary-button">Reset onboarding</button>
           </form>
+        </div>
+      </section>
+
+      <section class="panel application-update-panel" data-update-controls data-initial-update='{{ update_status|tojson }}'>
+        <div class="panel-header">
+          <h2>Application Update</h2>
+          <span data-update-summary>Checking…</span>
+        </div>
+        <div class="application-update-content">
+          <dl class="application-version-grid">
+            <div><dt>Current</dt><dd data-update-current>Loading…</dd></div>
+            <div><dt>Latest</dt><dd data-update-latest>Loading…</dd></div>
+            <div><dt>Last checked</dt><dd data-update-checked>Not yet checked</dd></div>
+          </dl>
+          <p class="application-update-error" data-update-error role="alert" hidden></p>
+          <div class="application-update-actions">
+            <button type="button" class="secondary-button" data-update-check>Check for Updates</button>
+            <button type="button" data-update-install hidden>Update Now</button>
+          </div>
         </div>
       </section>
 
@@ -193,6 +212,7 @@
 
     </main>
     <script src="/static/js/admin-history.js"></script>
+    <script src="/static/js/update.js?v={{ update_js_version }}"></script>
     <script>
       document.querySelectorAll('[data-duration-slider]').forEach((slider) => {
         const output = document.querySelector(`[data-duration-output="${slider.dataset.durationSlider}"]`);

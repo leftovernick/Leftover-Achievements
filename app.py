@@ -6,10 +6,11 @@ import base64
 import io
 import socket
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlencode
 
 import aiohttp
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -20,6 +21,7 @@ load_dotenv()
 
 from database import database as db
 from services.retroachievements import RetroAchievements
+from services.updater import ApplicationUpdater, UpdateError
 
 
 app = FastAPI(title="LeftoverAchievements Display")
@@ -28,6 +30,7 @@ templates = Jinja2Templates(directory="templates")
 
 db.init_db()
 ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or os.getenv("RA_API_KEY"))
+application_updater = ApplicationUpdater(Path(__file__).resolve().parent)
 RECENT_ACTIVITY_LIMIT = 5
 RECENT_ACTIVITY_FETCH_MINUTES = 43200
 WEEKLY_CACHE_TTL = timedelta(minutes=10)
@@ -1308,15 +1311,45 @@ async def display_events(request: Request):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.get("/api/update/status")
+async def application_update_status():
+    return await application_updater.status()
+
+
+@app.post("/api/update/check")
+async def check_for_application_update():
+    return await application_updater.check()
+
+
+@app.post("/api/update/install", status_code=202)
+async def install_application_update(request: Request):
+    origin = request.headers.get("origin")
+    expected_origin = str(request.base_url).rstrip("/")
+    if origin and origin.rstrip("/") != expected_origin:
+        raise HTTPException(status_code=403, detail="Cross-origin update requests are not allowed.")
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        raise HTTPException(status_code=403, detail="Cross-site update requests are not allowed.")
+    try:
+        return await application_updater.install()
+    except UpdateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.on_event("startup")
 async def start_background_polling():
     global achievement_poll_task
+    application_updater.start()
     if not db.setup_complete():
         return
     schedule_history_backfill()
     if achievement_poll_task and not achievement_poll_task.done():
         return
     achievement_poll_task = asyncio.create_task(achievement_poll_loop())
+
+
+@app.on_event("shutdown")
+async def stop_update_polling():
+    await application_updater.stop()
 
 
 async def dashboard_context():
@@ -1409,6 +1442,8 @@ async def admin(request: Request, message: str = None):
             "ra_api_key_source": ra_api_key_source(),
             "ra_connection_status": ra_connection_status(),
             "setup_complete": db.setup_complete(),
+            "update_status": await application_updater.status(),
+            "update_js_version": static_asset_version(os.path.join("static", "js", "update.js")),
         },
     )
 

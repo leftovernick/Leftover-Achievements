@@ -19,7 +19,8 @@ fi
 mkdir -p "$PROJECT_ROOT/database"
 chmod +x "$PROJECT_ROOT/scripts/start-backend.sh" \
   "$PROJECT_ROOT/scripts/start-kiosk.sh" \
-  "$PROJECT_ROOT/scripts/install-pi.sh"
+  "$PROJECT_ROOT/scripts/install-pi.sh" \
+  "$PROJECT_ROOT/scripts/update-app.sh"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   echo "Creating Python virtual environment at $VENV_DIR ..."
@@ -63,5 +64,6 @@ echo
 echo "Next steps:"
 echo "  1. Add your RA_API_KEY to $PROJECT_ROOT/.env"
 echo "  2. Install and enable deploy/leftover-achievements.service as documented in README.md"
-echo "  3. Add deploy/labwc-autostart to your labwc desktop autostart configuration"
-echo "  4. Reboot the Raspberry Pi"
+echo "  3. Install the narrow update sudoers rule documented in README.md"
+echo "  4. Add deploy/labwc-autostart to your labwc desktop autostart configuration"
+echo "  5. Reboot the Raspberry Pi"

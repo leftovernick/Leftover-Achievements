@@ -382,6 +382,14 @@ table {
 
 .settings-shell { max-width: 1100px; }
 .api-key-panel { margin-bottom: 12px; }
+.application-update-panel { margin-bottom: 12px; }
+.application-update-content { display: grid; gap: 12px; padding: 12px; }
+.application-version-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.application-version-grid div { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(0, 0, 0, 0.12); }
+.application-version-grid dt { color: var(--muted-2); font-size: 0.68rem; font-weight: 800; text-transform: uppercase; }
+.application-version-grid dd { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 0.82rem; font-weight: 700; }
+.application-update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.application-update-error { margin: 0; padding: 9px 10px; border: 1px solid rgba(184, 92, 92, 0.55); border-radius: var(--radius); color: #f0b3b3; background: rgba(184, 92, 92, 0.12); font-size: 0.82rem; }
 .api-key-form { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 18px; align-items: end; padding: 12px; }
 .api-key-form label > span { display: block; margin-bottom: 4px; font-weight: 800; }
 .api-key-form label small { display: block; color: var(--muted); font-size: 0.74rem; line-height: 1.35; }
@@ -659,6 +667,7 @@ input {
 .chart-error { border-color: rgba(184, 92, 92, 0.48); background: rgba(184, 92, 92, 0.12); }
 
 @media (max-width: 760px) {
+  .application-version-grid { grid-template-columns: 1fr; }
   .chart-grid { grid-template-columns: 1fr; }
   .chart-panel-wide { grid-column: auto; }
   .charts-hero { align-items: flex-start; flex-direction: column; }
@@ -1393,6 +1402,62 @@ input {
   gap: 12px;
 }
 
+.display-update-indicator {
+  position: fixed;
+  z-index: 12;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  padding: 9px;
+  place-items: center;
+  border: 1px solid rgba(255, 207, 33, 0.52);
+  border-radius: 50%;
+  color: var(--accent-strong);
+  background: rgba(16, 16, 16, 0.82);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.display-update-indicator[hidden] { display: none; }
+.display-update-indicator svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+
+.display-update-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 12px;
+  padding: 13px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+.display-update-control span,
+.display-update-control strong,
+.display-update-control small { display: block; }
+.display-update-control span { color: var(--muted); font-size: 0.74rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+.display-update-control strong { margin-top: 3px; color: var(--accent-strong); font-size: 1.05rem; }
+.display-update-control small { margin-top: 3px; color: var(--muted); }
+.display-update-actions { display: flex; gap: 8px; }
+.display-update-actions button { min-height: 48px; padding: 0 18px; border-radius: 14px; }
+
+.display-update-overlay {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: #f7f4ec;
+  background: rgba(12, 12, 12, 0.94);
+}
+.display-update-overlay[hidden] { display: none; }
+.display-update-overlay strong { color: var(--accent-strong); font-size: clamp(1.6rem, 5vw, 3rem); }
+.display-update-overlay span { color: var(--muted); font-size: clamp(1rem, 2vw, 1.35rem); }
+.display-update-spinner { width: 42px; height: 42px; border: 4px solid rgba(255, 255, 255, 0.15); border-top-color: var(--points-blue); border-radius: 50%; animation: display-update-spin 850ms linear infinite; }
+@keyframes display-update-spin { to { transform: rotate(360deg); } }
+
 .display-setting-button {
   display: flex;
   min-height: 82px;
@@ -1438,6 +1503,7 @@ input {
   .display-quick-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .display-speed-control { grid-column: 1 / -1; }
   .display-setting-button { min-height: 64px; }
+  .display-update-control { padding: 9px 12px; }
   .display-connection-content { grid-template-columns: minmax(150px, 34vh) minmax(0, 1fr); }
   .display-dashboard-qr-frame { width: min(34vh, 230px); }
 }

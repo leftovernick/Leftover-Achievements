@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Display</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=console-display-touch-2" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=app-updates-1" />
   </head>
   <body class="pi-display">
     <main class="display-shell" data-display-rotation data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
@@ -118,6 +118,10 @@
       </div>
     </main>
 
+    <button class="display-update-indicator" type="button" data-update-indicator hidden aria-label="Application update available" title="Application update available">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" /></svg>
+    </button>
+
     <section class="display-utility-layer display-dashboard-panel" data-dashboard-panel aria-hidden="true" aria-labelledby="dashboard-panel-title">
       <button class="display-utility-backdrop" type="button" data-close-panel aria-label="Close dashboard connection panel"></button>
       <div class="display-utility-card" role="dialog" aria-modal="true">
@@ -159,8 +163,25 @@
             </div>
           </fieldset>
         </div>
+        <div class="display-update-control" data-display-update-control>
+          <div>
+            <span>Application Update</span>
+            <strong data-display-update-state>Checking…</strong>
+            <small data-display-update-detail></small>
+          </div>
+          <div class="display-update-actions">
+            <button type="button" data-display-update-check>Check</button>
+            <button type="button" data-display-update-install hidden>Update</button>
+          </div>
+        </div>
       </div>
     </section>
+
+    <aside class="display-update-overlay" data-update-overlay aria-live="assertive" hidden>
+      <div class="display-update-spinner" aria-hidden="true"></div>
+      <strong data-update-overlay-title>Updating…</strong>
+      <span data-update-overlay-detail>Preparing update</span>
+    </aside>
 
     <aside class="achievement-notification" data-achievement-notification aria-live="polite">
       <div class="achievement-notification-shell">

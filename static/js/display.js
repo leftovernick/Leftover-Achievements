@@ -39,6 +39,14 @@
   const settingsPanel = document.querySelector('[data-settings-panel]');
   const audioState = document.querySelector('[data-audio-state]');
   const rotationState = document.querySelector('[data-rotation-state]');
+  const updateIndicator = document.querySelector('[data-update-indicator]');
+  const updateState = document.querySelector('[data-display-update-state]');
+  const updateDetail = document.querySelector('[data-display-update-detail]');
+  const updateCheckButton = document.querySelector('[data-display-update-check]');
+  const updateInstallButton = document.querySelector('[data-display-update-install]');
+  const updateOverlay = document.querySelector('[data-update-overlay]');
+  const updateOverlayTitle = document.querySelector('[data-update-overlay-title]');
+  const updateOverlayDetail = document.querySelector('[data-update-overlay-detail]');
   const audioEnabled = root.dataset.audioEnabled === 'true';
   let customAudioSources = {};
   try {
@@ -81,6 +89,7 @@
   const pauseReasons = new Set();
   let audioMuted = false;
   let rotationSpeed = 'normal';
+  let updateRunning = false;
 
   dashboardQr?.addEventListener('error', () => {
     dashboardQr.hidden = true;
@@ -484,6 +493,80 @@
     if (rotationButton) rotationButton.setAttribute('aria-pressed', String(pauseReasons.has('manual')));
   };
 
+  const updatePhaseLabel = (phase) => ({
+    preparing: 'Preparing update',
+    installing: 'Installing dependencies',
+    restarting: 'Restarting service',
+  }[phase] || 'Updating');
+
+  const renderUpdateState = (state) => {
+    const wasRunning = updateRunning;
+    updateRunning = Boolean(state.installing);
+    if (updateIndicator) updateIndicator.hidden = !state.update_available || Boolean(state.error) || updateRunning;
+    if (updateState) {
+      if (state.installing) updateState.textContent = updatePhaseLabel(state.install_phase);
+      else if (state.install_phase === 'failed') updateState.textContent = 'Update failed';
+      else if (state.error) updateState.textContent = 'Unable to check';
+      else if (state.update_available) updateState.textContent = 'Update available';
+      else if (state.last_checked_at) updateState.textContent = 'Up to date';
+      else updateState.textContent = 'Checking…';
+    }
+    if (updateDetail) {
+      if (state.error) updateDetail.textContent = state.error;
+      else if (state.update_available) updateDetail.textContent = `${state.current?.short_commit || 'Current'} → ${state.latest?.short_commit || 'latest'}`;
+      else updateDetail.textContent = state.current?.short_commit ? `Version ${state.current.short_commit}` : '';
+    }
+    if (updateCheckButton) updateCheckButton.disabled = state.checking || state.installing;
+    if (updateInstallButton) {
+      updateInstallButton.hidden = !state.update_available && !state.installing;
+      updateInstallButton.disabled = state.installing;
+      updateInstallButton.textContent = state.installing ? 'Updating…' : 'Update';
+    }
+
+    if (state.installing) {
+      pauseRotation('update');
+      if (updateOverlay) updateOverlay.hidden = false;
+      if (updateOverlayTitle) updateOverlayTitle.textContent = 'Updating…';
+      if (updateOverlayDetail) updateOverlayDetail.textContent = updatePhaseLabel(state.install_phase);
+    } else if (wasRunning && state.error) {
+      if (updateOverlay) updateOverlay.hidden = true;
+      resumeRotation('update');
+    } else if (wasRunning) {
+      if (updateOverlay) updateOverlay.hidden = false;
+      if (updateOverlayTitle) updateOverlayTitle.textContent = 'Update complete';
+      if (updateOverlayDetail) updateOverlayDetail.textContent = 'Reloading display…';
+      window.setTimeout(() => window.location.reload(), 700);
+    } else {
+      if (updateOverlay) updateOverlay.hidden = true;
+      resumeRotation('update');
+    }
+  };
+
+  const updateRequest = async (url, options = {}) => {
+    const response = await fetch(url, { cache: 'no-store', ...options });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
+    renderUpdateState(payload);
+    return payload;
+  };
+
+  const pollUpdateState = async () => {
+    try {
+      await updateRequest('/api/update/status');
+    } catch (error) {
+      if (updateRunning) {
+        if (updateOverlay) updateOverlay.hidden = false;
+        if (updateOverlayTitle) updateOverlayTitle.textContent = 'Reconnecting…';
+        if (updateOverlayDetail) updateOverlayDetail.textContent = 'Waiting for the updated service';
+      } else {
+        if (updateState) updateState.textContent = 'Unable to check';
+        if (updateDetail) updateDetail.textContent = error.message;
+        if (updateIndicator) updateIndicator.hidden = true;
+      }
+    }
+    window.setTimeout(pollUpdateState, updateRunning ? 2000 : 90000);
+  };
+
   const showPanel = (panel) => {
     if (!panel || notificationActive || notificationQueue.length > 0 || openPanel) return;
     openPanel = panel;
@@ -505,6 +588,29 @@
 
   document.querySelectorAll('[data-close-panel]').forEach((button) => {
     button.addEventListener('click', closePanel);
+  });
+
+  updateIndicator?.addEventListener('click', () => showPanel(settingsPanel));
+  updateCheckButton?.addEventListener('click', async () => {
+    updateCheckButton.disabled = true;
+    try {
+      await updateRequest('/api/update/check', { method: 'POST' });
+    } catch (error) {
+      if (updateState) updateState.textContent = 'Unable to check';
+      if (updateDetail) updateDetail.textContent = error.message;
+      updateCheckButton.disabled = false;
+    }
+  });
+  updateInstallButton?.addEventListener('click', async () => {
+    if (updateRunning || !window.confirm('Install this update and restart LeftoverAchievements?')) return;
+    updateInstallButton.disabled = true;
+    try {
+      await updateRequest('/api/update/install', { method: 'POST' });
+    } catch (error) {
+      if (updateState) updateState.textContent = 'Update failed';
+      if (updateDetail) updateDetail.textContent = error.message;
+      updateInstallButton.disabled = false;
+    }
   });
 
   document.querySelector('[data-audio-toggle]')?.addEventListener('click', () => {
@@ -586,6 +692,7 @@
   scheduleNextSlide();
   connectAchievementEvents();
   updateQuickSettings();
+  pollUpdateState();
 
   if (audioEnabled) {
     document.addEventListener('pointerdown', enableDisplayAudio, { once: true });
