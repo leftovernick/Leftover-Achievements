@@ -48,7 +48,7 @@ Set-Content -Path $VersionFile -Value $Version -Encoding ASCII
 $env:LEFTOVER_ARTIFACT_NAME = $ArtifactName
 $env:LEFTOVER_BUILD_VERSION_FILE = $VersionFile
 $env:LEFTOVER_BUILD_CONSOLE = if ($DebugConsole) { "1" } else { "0" }
-& $PyInstaller --clean --noconfirm --workpath $WorkRoot --distpath $DistRoot (Join-Path $ProjectRoot "packaging\windows.spec")
+& $PyInstaller --clean --noconfirm --workpath $WorkRoot --distpath $DistRoot (Join-Path $ProjectRoot "packaging_specs\windows.spec")
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE."
 }

@@ -52,7 +52,7 @@ printf '%s\n' "$VERSION" > "$VERSION_FILE"
 
 export LEFTOVER_ARTIFACT_NAME="$ARTIFACT_NAME"
 export LEFTOVER_BUILD_VERSION_FILE="$VERSION_FILE"
-"$PYINSTALLER" --clean --noconfirm --workpath "$WORK_ROOT" --distpath "$DIST_ROOT" "$PROJECT_ROOT/packaging/macos.spec"
+"$PYINSTALLER" --clean --noconfirm --workpath "$WORK_ROOT" --distpath "$DIST_ROOT" "$PROJECT_ROOT/packaging_specs/macos.spec"
 
 ZIP_PATH="$RELEASE_ROOT/$ARTIFACT_NAME.zip"
 rm -f "$ZIP_PATH"

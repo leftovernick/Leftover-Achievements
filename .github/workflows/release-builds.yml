@@ -46,6 +46,7 @@ jobs:
       - name: Verify stable release tag and exact source revision
         shell: bash
         run: |
+          .venv/bin/python -c 'from pathlib import Path; import packaging, packaging.version; resolved=Path(packaging.__file__).resolve(); print(f"packaging loaded from: {resolved}"); assert any(part in {"site-packages", "dist-packages"} for part in resolved.parts), resolved'
           .venv/bin/python -c 'import os; from packaging.version import Version; from scripts.validate_release_package import stable_version; assert str(Version("0.1.0")) == "0.1.0"; stable_version(os.environ["RELEASE_TAG"])'
           test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
           test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
@@ -129,6 +130,7 @@ jobs:
       - name: Verify stable release tag and exact source revision
         shell: pwsh
         run: |
+          .\.venv\Scripts\python.exe -c 'from pathlib import Path; import packaging, packaging.version; resolved=Path(packaging.__file__).resolve(); print(f"packaging loaded from: {resolved}"); assert any(part in {"site-packages", "dist-packages"} for part in resolved.parts), resolved'
           .\.venv\Scripts\python.exe -c 'import os; from packaging.version import Version; from scripts.validate_release_package import stable_version; assert str(Version("0.1.0")) == "0.1.0"; stable_version(os.environ["RELEASE_TAG"])'
           if ((git rev-parse HEAD) -ne (git rev-list -n 1 $env:RELEASE_TAG)) {
             throw "Checked-out commit does not match release tag $env:RELEASE_TAG."

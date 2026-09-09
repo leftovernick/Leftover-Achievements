@@ -86,6 +86,9 @@ pip install -r requirements-build.txt
 Build on the target operating system; PyInstaller does not cross-compile. Both build
 scripts derive the version from the exact Git tag at HEAD. CI or a test build may
 instead provide `LEFTOVER_BUILD_VERSION=v1.2.0`; end users never edit a version file.
+The PyInstaller definitions live in `packaging_specs/macos.spec` and
+`packaging_specs/windows.spec`; the directory deliberately avoids the name of the
+third-party Python `packaging` dependency used for release-version validation.
 
 On an Apple Silicon Mac:
 
