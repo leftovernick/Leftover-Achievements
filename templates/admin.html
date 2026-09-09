@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Settings</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=app-updates-1" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=release-updates-1" />
   </head>
   <body class="web-dashboard admin-page">
     <header class="top-nav">
@@ -90,11 +90,18 @@
         </div>
         <div class="application-update-content">
           <dl class="application-version-grid">
-            <div><dt>Current</dt><dd data-update-current>Loading…</dd></div>
+            <div><dt>Installed</dt><dd data-update-current>Loading…</dd></div>
             <div><dt>Latest</dt><dd data-update-latest>Loading…</dd></div>
+            <div><dt>Published</dt><dd data-update-published>Unavailable</dd></div>
             <div><dt>Last checked</dt><dd data-update-checked>Not yet checked</dd></div>
           </dl>
+          <div class="application-release-details" data-update-release-details hidden>
+            <strong data-update-release-name></strong>
+            <p data-update-release-notes hidden></p>
+            <a data-update-release-link href="#" target="_blank" rel="noopener noreferrer">View release on GitHub</a>
+          </div>
           <p class="application-update-error" data-update-error role="alert" hidden></p>
+          <p class="application-update-note" data-update-install-note hidden></p>
           <div class="application-update-actions">
             <button type="button" class="secondary-button" data-update-check>Check for Updates</button>
             <button type="button" data-update-install hidden>Update Now</button>

@@ -1,5 +1,4 @@
 import asyncio
-import os
 import ssl
 import time
 from datetime import datetime, timedelta, timezone
@@ -20,7 +19,7 @@ class RetroAchievements:
     """Small RetroAchievements web API client for the dashboard."""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
-        self.api_key = api_key or os.getenv("RA_API_KEY")
+        self.api_key = api_key
         self.base_url = base_url or RA_API_URL
         self.timeout = aiohttp.ClientTimeout(total=10)
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())

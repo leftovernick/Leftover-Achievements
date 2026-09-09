@@ -507,18 +507,21 @@
       if (state.installing) updateState.textContent = updatePhaseLabel(state.install_phase);
       else if (state.install_phase === 'failed') updateState.textContent = 'Update failed';
       else if (state.error) updateState.textContent = 'Unable to check';
-      else if (state.update_available) updateState.textContent = 'Update available';
-      else if (state.last_checked_at) updateState.textContent = 'Up to date';
+      else if (state.update_available && state.install_supported) updateState.textContent = 'Update available';
+      else if (state.update_available) updateState.textContent = 'Update available · Manual install';
+      else if (state.last_checked_at && state.latest_version) updateState.textContent = 'Up to date';
+      else if (state.last_checked_at) updateState.textContent = 'No stable release';
       else updateState.textContent = 'Checking…';
     }
     if (updateDetail) {
       if (state.error) updateDetail.textContent = state.error;
-      else if (state.update_available) updateDetail.textContent = `${state.current?.short_commit || 'Current'} → ${state.latest?.short_commit || 'latest'}`;
-      else updateDetail.textContent = state.current?.short_commit ? `Version ${state.current.short_commit}` : '';
+      else if (state.update_available && !state.install_supported) updateDetail.textContent = state.install_unavailable_reason || 'Open Settings for download details';
+      else if (state.update_available) updateDetail.textContent = `${state.installed_version || 'Development build'} → ${state.latest_version}`;
+      else updateDetail.textContent = state.installed_version || state.latest_version || 'Development build';
     }
     if (updateCheckButton) updateCheckButton.disabled = state.checking || state.installing;
     if (updateInstallButton) {
-      updateInstallButton.hidden = !state.update_available && !state.installing;
+      updateInstallButton.hidden = (!state.update_available || !state.install_supported) && !state.installing;
       updateInstallButton.disabled = state.installing;
       updateInstallButton.textContent = state.installing ? 'Updating…' : 'Update';
     }

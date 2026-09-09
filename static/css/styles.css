@@ -384,12 +384,17 @@ table {
 .api-key-panel { margin-bottom: 12px; }
 .application-update-panel { margin-bottom: 12px; }
 .application-update-content { display: grid; gap: 12px; padding: 12px; }
-.application-version-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.application-version-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .application-version-grid div { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(0, 0, 0, 0.12); }
 .application-version-grid dt { color: var(--muted-2); font-size: 0.68rem; font-weight: 800; text-transform: uppercase; }
 .application-version-grid dd { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 0.82rem; font-weight: 700; }
 .application-update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .application-update-error { margin: 0; padding: 9px 10px; border: 1px solid rgba(184, 92, 92, 0.55); border-radius: var(--radius); color: #f0b3b3; background: rgba(184, 92, 92, 0.12); font-size: 0.82rem; }
+.application-update-note { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.application-release-details { padding: 10px; border-left: 3px solid var(--points-blue); background: rgba(34, 153, 255, 0.06); }
+.application-release-details strong { display: block; margin-bottom: 4px; }
+.application-release-details p { margin: 0 0 7px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.application-release-details a { color: var(--points-blue-soft); font-size: 0.82rem; font-weight: 700; }
 .api-key-form { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 18px; align-items: end; padding: 12px; }
 .api-key-form label > span { display: block; margin-bottom: 4px; font-weight: 800; }
 .api-key-form label small { display: block; color: var(--muted); font-size: 0.74rem; line-height: 1.35; }

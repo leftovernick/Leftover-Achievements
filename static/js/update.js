@@ -5,23 +5,23 @@
   const summary = root.querySelector('[data-update-summary]');
   const current = root.querySelector('[data-update-current]');
   const latest = root.querySelector('[data-update-latest]');
+  const published = root.querySelector('[data-update-published]');
   const checked = root.querySelector('[data-update-checked]');
   const error = root.querySelector('[data-update-error]');
+  const installNote = root.querySelector('[data-update-install-note]');
+  const releaseDetails = root.querySelector('[data-update-release-details]');
+  const releaseName = root.querySelector('[data-update-release-name]');
+  const releaseNotes = root.querySelector('[data-update-release-notes]');
+  const releaseLink = root.querySelector('[data-update-release-link]');
   const checkButton = root.querySelector('[data-update-check]');
   const installButton = root.querySelector('[data-update-install]');
   let updateRunning = false;
 
-  const commitLabel = (commit) => {
-    if (!commit) return 'Unavailable';
-    const date = commit.committed_at
-      ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(commit.committed_at))
-      : '';
-    return [commit.short_commit, date, commit.message].filter(Boolean).join(' · ');
-  };
-
-  const checkedLabel = (value) => value
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-    : 'Not yet checked';
+  const dateLabel = (value, includeTime = false) => value
+    ? new Intl.DateTimeFormat(undefined, includeTime
+      ? { dateStyle: 'medium', timeStyle: 'short' }
+      : { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value))
+    : 'Unavailable';
 
   const phaseLabel = (phase) => ({
     preparing: 'Preparing update…',
@@ -32,21 +32,37 @@
   const render = (state) => {
     const wasRunning = updateRunning;
     updateRunning = Boolean(state.installing);
-    current.textContent = commitLabel(state.current);
-    latest.textContent = commitLabel(state.latest);
-    checked.textContent = checkedLabel(state.last_checked_at);
+    current.textContent = state.installed_version || 'Development build';
+    latest.textContent = state.latest_version || 'No stable release';
+    published.textContent = dateLabel(state.latest_release_published_at);
+    checked.textContent = state.last_checked_at ? dateLabel(state.last_checked_at, true) : 'Not yet checked';
     if (state.installing) summary.textContent = phaseLabel(state.install_phase);
     else if (state.install_phase === 'failed') summary.textContent = 'Update failed';
     else if (state.error) summary.textContent = 'Unable to check';
-    else if (state.update_available) summary.textContent = 'Update available';
-    else if (state.last_checked_at) summary.textContent = 'Up to date';
+    else if (state.update_available && state.install_supported) summary.textContent = 'Update available';
+    else if (state.update_available) summary.textContent = 'Update available · Manual install';
+    else if (state.last_checked_at && state.latest_version) summary.textContent = 'Up to date';
+    else if (state.last_checked_at) summary.textContent = 'No stable release';
     else summary.textContent = 'Checking…';
+
+    const hasReleaseDetails = Boolean(state.latest_release_name || state.latest_release_notes || state.latest_release_url);
+    releaseDetails.hidden = !hasReleaseDetails;
+    releaseName.textContent = state.latest_release_name || state.latest_version || '';
+    releaseNotes.hidden = !state.latest_release_notes;
+    releaseNotes.textContent = state.latest_release_notes || '';
+    const releaseLinkUrl = state.latest_release_asset_url || state.latest_release_url;
+    releaseLink.hidden = !releaseLinkUrl;
+    releaseLink.textContent = state.latest_release_asset_url ? 'Download packaged release' : 'View release on GitHub';
+    if (releaseLinkUrl) releaseLink.href = releaseLinkUrl;
+    else releaseLink.removeAttribute('href');
 
     error.hidden = !state.error;
     error.textContent = state.error || '';
+    installNote.hidden = !state.update_available || state.install_supported;
+    installNote.textContent = state.install_unavailable_reason || '';
     checkButton.disabled = state.checking || state.installing;
     checkButton.textContent = state.checking ? 'Checking…' : 'Check for Updates';
-    installButton.hidden = !state.update_available && !state.installing;
+    installButton.hidden = (!state.update_available || !state.install_supported) && !state.installing;
     installButton.disabled = state.installing;
     installButton.textContent = state.installing ? phaseLabel(state.install_phase) : 'Update Now';
     if (wasRunning && !state.installing && !state.error) window.setTimeout(() => window.location.reload(), 700);

@@ -50,6 +50,86 @@ After setup, the main pages are:
 - The admin page validates users through `API_GetUserProfile.php`, the official RetroAchievements profile endpoint.
 - The one-second graceful-shutdown limit lets the development server reload even while the display page has an open live-events connection.
 
+## Packaged desktop server
+
+The macOS and Windows packages include Python and all runtime dependencies. They run
+LeftoverAchievements as a headless local server: no kiosk, application window, or
+automatically opened browser. After launching the package, open
+http://127.0.0.1:8000/ yourself. Other devices on the same trusted LAN can use the
+LAN address recorded in the application log. `/display` remains available when a
+desktop user intentionally opens it.
+
+First launch uses the same browser-based onboarding as the Pi. The API key, users,
+settings, history, custom audio, and database are persisted outside the package:
+
+- macOS: `~/Library/Application Support/LeftoverAchievements/`
+- Windows: `%LOCALAPPDATA%\LeftoverAchievements\`
+
+Rotating logs are stored in the `logs` subdirectory as
+`leftover-achievements.log`. The log records the localhost URL, detected LAN URL,
+startup errors, and shutdown without recording API keys. Launching a second copy
+exits cleanly when the instance lock or server port is already owned.
+
+Packaged builds can check GitHub Releases and show newer versions. Self-replacement
+is deliberately not implemented yet: **Update Now** is hidden and Settings explains
+that the matching release ZIP must be downloaded manually. Packaged builds never run
+the Pi git checkout, pip installation, sudo, or systemd update path.
+
+### Build requirements
+
+Install the build-only dependencies in the project virtual environment:
+
+```bash
+pip install -r requirements-build.txt
+```
+
+Build on the target operating system; PyInstaller does not cross-compile. Both build
+scripts derive the version from the exact Git tag at HEAD. CI or a test build may
+instead provide `LEFTOVER_BUILD_VERSION=v1.2.0`; end users never edit a version file.
+
+On an Apple Silicon Mac:
+
+```bash
+./scripts/build-macos.sh
+```
+
+This produces
+`dist/releases/LeftoverAchievements-macOS-arm64-v1.2.0.zip`. The contained `.app`
+runs without a main window or Dock icon. It is not Developer ID signed or notarized,
+so downloaded builds may require **Control-click → Open** in Finder or approval in
+**System Settings → Privacy & Security**. Signing and notarization are intentionally
+deferred.
+
+On Windows x64, run PowerShell from the repository:
+
+```powershell
+.\scripts\build-windows.ps1
+```
+
+This creates the reliable one-directory build and archives it as
+`dist\releases\LeftoverAchievements-Windows-x64-v1.2.0.zip`. The normal executable
+has no console window. For startup diagnosis, build a console-enabled variant with:
+
+```powershell
+.\scripts\build-windows.ps1 -DebugConsole
+```
+
+Publishing a stable GitHub Release automatically invokes these same scripts in the
+`Build packaged release assets` workflow. Independent native jobs build Apple
+Silicon macOS on `macos-15` and Windows x64 on `windows-latest`. Each job checks out
+the Release tag explicitly, embeds that exact tag, validates the ZIP contents and
+frozen server, and attaches one predictably named asset to the same Release:
+
+- `LeftoverAchievements-macOS-arm64-v1.2.0.zip`
+- `LeftoverAchievements-Windows-x64-v1.2.0.zip`
+
+Rerunning a job replaces its existing same-named asset. A failed job uploads
+nothing, and does not prevent the other platform job from producing its asset.
+Drafts and prereleases do not produce stable packages. Normal pushes to `main` do
+not run this workflow or produce distributable packages. The workflow uses its
+built-in `GITHUB_TOKEN`; no personal access token or release-note generation is
+involved.
+
 ## Raspberry Pi 5 deployment
 
 Use Raspberry Pi OS 64-bit with Desktop. Current Raspberry Pi OS desktop images use
@@ -171,14 +251,25 @@ journalctl -u leftover-achievements
 
 ### Application updates
 
-The backend checks `origin/main` every five minutes and caches the result. These
-checks only run `git fetch`; they never install an update. When an update is
-available, use **Settings → Application Update** from the web dashboard or swipe
-down from the top edge of the touchscreen and choose **Update**. The installer
-requires a clean tracked worktree and the `main` branch, performs a fast-forward
-only merge, updates `.venv` from `requirements.txt`, and restarts only the backend
-service. Ignored files such as `.env`, the SQLite database, and updater logs are not
-modified.
+The backend checks the public GitHub Releases API every five minutes and caches the
+latest published stable release. Drafts, prereleases, and ordinary commits pushed to
+`main` do not create update notifications. Release tags use semantic versions such
+as `v1.2.0`, so `v1.10.0` correctly compares newer than `v1.9.0`. No GitHub token is
+required for the public repository.
+
+When an update is available, use **Settings → Application Update** from the web
+dashboard or swipe down from the top edge of the touchscreen and choose **Update**.
+The installer requires a clean tracked worktree, fetches the selected release tag,
+refuses same-version or older releases, checks out that exact tag in detached HEAD
+mode, updates `.venv` from `requirements.txt`, and restarts only the backend service.
+Detached HEAD is the expected production state after the first release update and
+does not prevent future updates. Ignored files such as `.env`, the SQLite database,
+and updater logs are not modified.
+
+A new Pi initially cloned from `main` is shown as a **Development build** until HEAD
+exactly matches a stable version tag. If a stable release exists, that unversioned
+installation can install it through the normal Update button; subsequent checks use
+the installed tag for semantic version comparisons.
 
 The normal service user needs permission to restart this one service. Edit the
 included sudoers template, validate it, and install it with restrictive permissions:
@@ -194,6 +285,32 @@ it does not grant general passwordless sudo. Confirm that `command -v systemctl`
 prints `/usr/bin/systemctl` on the Pi before installing the template. Update progress
 is logged to `.update.log`. A failed update leaves persisted application data alone
 and reports the last log message in both interfaces.
+
+#### Publishing a release with GitHub Desktop
+
+Normal development does not require release commands: make changes locally, commit
+them in GitHub Desktop, and push to `main`. The Pi will do nothing merely because
+`main` contains newer commits.
+
+When a build is ready for users:
+
+1. Commit and push the desired release commit with GitHub Desktop.
+2. Verify that commit appears on GitHub and is the exact revision to ship.
+3. Open the repository on GitHub.com and choose **Releases → Draft a new release**.
+4. Create or select a semantic version tag such as `v1.2.0`.
+5. Target the desired commit (normally the verified commit on `main`).
+6. Write the human-authored release title and notes.
+7. Leave **Set as a pre-release** off, then publish the Release.
+8. Open the **Actions** tab and follow both native package jobs.
+9. Confirm that the macOS arm64 and Windows x64 ZIPs appear under the same Release.
+10. Installed LeftoverAchievements devices detect that stable published version.
+
+Publishing the Release is the explicit **ship this version** action. Ordinary commits
+and pushes never create device updates or desktop packages. After publication, a Pi
+detects the tag during its next check and waits for the user to install it from Quick
+Settings or web Settings. Packaged desktop installations detect the matching attached
+ZIP and direct the user to download it manually. No command-line Git is needed to
+publish releases.
 
 After moving the repository, update the paths in the installed systemd unit and labwc
 autostart entry, then run `sudo systemctl daemon-reload` and restart the service.

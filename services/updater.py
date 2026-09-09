@@ -1,19 +1,30 @@
-"""Application update checks and installation handoff.
+"""Stable GitHub Release checks and application update handoff.
 
-All git and updater-process execution lives here so web routes only deal in state.
+All network, version, git, and updater-process logic lives here so routes only
+expose cached state and trigger explicit user actions.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import ssl
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from urllib.parse import urlparse
+
+import aiohttp
+import certifi
+from packaging.version import InvalidVersion, Version
 
 
 logger = logging.getLogger(__name__)
+ReleaseFetcher = Callable[[str], Awaitable[dict[str, Any] | None]]
+if TYPE_CHECKING:
+    from runtime import RuntimeEnvironment
 
 
 class UpdateError(RuntimeError):
@@ -21,22 +32,55 @@ class UpdateError(RuntimeError):
 
 
 class ApplicationUpdater:
-    def __init__(self, project_root: Path, check_interval_seconds: int = 300):
+    VERSION_TAG_PATTERN = re.compile(
+        r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:[.+-][0-9A-Za-z.-]+)?$"
+    )
+
+    def __init__(
+        self,
+        project_root: Path,
+        check_interval_seconds: int = 300,
+        repository: str | None = None,
+        release_fetcher: ReleaseFetcher | None = None,
+        runtime_environment: "RuntimeEnvironment | None" = None,
+    ):
         self.project_root = project_root.resolve()
+        self.runtime = runtime_environment
         self.check_interval_seconds = check_interval_seconds
+        self.repository = repository
+        self.release_fetcher = release_fetcher or self._fetch_latest_release
         self.script_path = self.project_root / "scripts" / "update-app.sh"
-        self.log_path = self.project_root / ".update.log"
-        self.phase_path = self.project_root / ".update-status"
+        self.log_path = (
+            runtime_environment.update_log_path
+            if runtime_environment
+            else self.project_root / ".update.log"
+        )
+        self.phase_path = (
+            runtime_environment.update_status_path
+            if runtime_environment
+            else self.project_root / ".update-status"
+        )
         self._lock = asyncio.Lock()
         self._install_lock = asyncio.Lock()
         self._background_task: asyncio.Task | None = None
         self._install_process: subprocess.Popen | None = None
         self._last_warning_at: datetime | None = None
         self._state: dict[str, Any] = {
+            "installed_version": None,
+            "installed_build": "development",
+            "latest_version": None,
+            "latest_release_tag": None,
+            "latest_release_name": None,
+            "latest_release_url": None,
+            "latest_release_published_at": None,
+            "latest_release_notes": None,
+            "latest_release_asset_name": None,
+            "latest_release_asset_url": None,
             "current_commit": None,
-            "latest_commit": None,
             "current": None,
-            "latest": None,
+            "runtime_mode": runtime_environment.mode.value if runtime_environment else "source",
+            "install_supported": runtime_environment.supports_self_update if runtime_environment else True,
+            "install_unavailable_reason": self._install_unavailable_reason(),
             "update_available": False,
             "last_checked_at": None,
             "checking": False,
@@ -45,6 +89,31 @@ class ApplicationUpdater:
             "error": None,
         }
         self._restore_install_state()
+
+    @staticmethod
+    def parse_stable_version(tag: str | None) -> Version | None:
+        if not tag or not isinstance(tag, str):
+            return None
+        normalized = tag.strip()
+        if not ApplicationUpdater.VERSION_TAG_PATTERN.fullmatch(normalized):
+            return None
+        if normalized.lower().startswith("v"):
+            normalized = normalized[1:]
+        try:
+            version = Version(normalized)
+        except InvalidVersion:
+            return None
+        if version.is_prerelease or version.is_devrelease:
+            return None
+        return version
+
+    @classmethod
+    def release_is_newer(cls, installed: str | None, latest: str | None) -> bool:
+        latest_version = cls.parse_stable_version(latest)
+        if latest_version is None:
+            return False
+        installed_version = cls.parse_stable_version(installed)
+        return installed_version is None or latest_version > installed_version
 
     def _restore_install_state(self) -> None:
         try:
@@ -65,7 +134,7 @@ class ApplicationUpdater:
             self._state["install_phase"] = "failed"
             self._state["error"] = self._install_error()
 
-    async def _run_git(self, *args: str, timeout: int = 30, check: bool = True) -> str:
+    async def _run_git(self, *args: str, timeout: int = 30) -> str:
         def run() -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 ["git", *args],
@@ -80,17 +149,14 @@ class ApplicationUpdater:
             result = await asyncio.to_thread(run)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise UpdateError(f"Git command failed: {exc}") from exc
-        if check and result.returncode != 0:
+        if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
             raise UpdateError(detail or f"git {' '.join(args)} failed")
         return result.stdout.strip()
 
     async def _commit_details(self, ref: str) -> dict[str, str]:
         value = await self._run_git(
-            "show",
-            "-s",
-            "--format=%H%x00%h%x00%cI%x00%s",
-            ref,
+            "show", "-s", "--format=%H%x00%h%x00%cI%x00%s", ref
         )
         parts = value.split("\0", 3)
         if len(parts) != 4:
@@ -102,6 +168,98 @@ class ApplicationUpdater:
             "committed_at": committed_at,
             "message": message[:160],
         }
+
+    async def _installed_version(self) -> str | None:
+        if self.runtime and self.runtime.is_packaged:
+            version = self.runtime.installed_version
+            return version if self.parse_stable_version(version) is not None else None
+        tags = await self._run_git("tag", "--points-at", "HEAD")
+        candidates = []
+        for tag in tags.splitlines():
+            parsed = self.parse_stable_version(tag)
+            if parsed is not None:
+                candidates.append((parsed, tag.strip()))
+        return max(candidates, default=(None, None), key=lambda item: item[0])[1]
+
+    async def _repository_name(self) -> str:
+        if self.repository:
+            return self.repository
+        if self.runtime and self.runtime.is_packaged:
+            self.repository = self.runtime.github_repository
+            return self.repository
+        remote_url = await self._run_git("remote", "get-url", "origin")
+        match = re.match(r"^git@github\.com:([^/]+/[^/]+?)(?:\.git)?$", remote_url)
+        if match:
+            repository = match.group(1)
+        else:
+            parsed = urlparse(remote_url)
+            if parsed.hostname != "github.com":
+                raise UpdateError("The origin remote is not a GitHub repository.")
+            repository = parsed.path.strip("/")
+            if repository.endswith(".git"):
+                repository = repository[:-4]
+        if repository.count("/") != 1:
+            raise UpdateError("Could not determine the GitHub repository from origin.")
+        self.repository = repository
+        return repository
+
+    async def _fetch_latest_release(self, repository: str) -> dict[str, Any] | None:
+        url = f"https://api.github.com/repos/{repository}/releases/latest"
+        timeout = aiohttp.ClientTimeout(total=30)
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "LeftoverAchievements-Updater",
+        }
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+                async with session.get(url, ssl=ssl_context) as response:
+                    if response.status == 404:
+                        return None
+                    if response.status != 200:
+                        detail = (await response.text())[:240]
+                        raise UpdateError(
+                            f"GitHub release check failed ({response.status}): {detail}"
+                        )
+                    payload = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            raise UpdateError(f"Could not reach GitHub Releases: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise UpdateError("GitHub returned an invalid release response.")
+        return payload
+
+    @staticmethod
+    def _release_notes(body: Any) -> str | None:
+        if not isinstance(body, str):
+            return None
+        summary = " ".join(body.split())
+        return summary[:500] or None
+
+    def _install_unavailable_reason(self) -> str | None:
+        if not self.runtime or self.runtime.supports_self_update:
+            return None
+        if self.runtime.is_packaged:
+            platform_name = "macOS" if self.runtime.mode.value == "macos_packaged" else "Windows"
+            return (
+                f"Automatic installation is not yet supported for packaged {platform_name} builds. "
+                "Download the matching release asset from GitHub to update manually."
+            )
+        return "Automatic installation is only supported on Raspberry Pi deployments."
+
+    def _release_asset(self, release: dict[str, Any], version: str) -> tuple[str | None, str | None]:
+        if not self.runtime:
+            return None, None
+        expected_name = self.runtime.release_asset_name(version)
+        if not expected_name:
+            return None, None
+        for asset in release.get("assets") or []:
+            if not isinstance(asset, dict) or asset.get("name") != expected_name:
+                continue
+            url = asset.get("browser_download_url")
+            if isinstance(url, str) and url.startswith("https://github.com/"):
+                return expected_name, url
+        return expected_name, None
 
     async def status(self) -> dict[str, Any]:
         self._refresh_process_state()
@@ -116,26 +274,60 @@ class ApplicationUpdater:
             self._state["checking"] = True
             self._state["error"] = None
             try:
-                current = await self._commit_details("HEAD")
-                self._state.update(current_commit=current["commit"], current=current)
-                await self._run_git("fetch", "--quiet", "origin", "main", timeout=90)
-                latest = await self._commit_details("origin/main")
-                ancestor = await self._is_ancestor("HEAD", "origin/main")
-                update_available = current["commit"] != latest["commit"] and ancestor
-                error = None
-                if current["commit"] != latest["commit"] and not ancestor:
-                    error = "Local main has diverged from origin/main; automatic update is disabled."
+                current = None
+                if not (self.runtime and self.runtime.is_packaged):
+                    current = await self._commit_details("HEAD")
+                installed = await self._installed_version()
                 self._state.update(
-                    current_commit=current["commit"],
-                    latest_commit=latest["commit"],
+                    current_commit=current["commit"] if current else None,
                     current=current,
-                    latest=latest,
-                    update_available=update_available,
-                    last_checked_at=datetime.now(timezone.utc).isoformat(),
-                    error=error,
+                    installed_version=installed,
+                    installed_build=(
+                        "release" if installed else
+                        "packaged_unversioned" if self.runtime and self.runtime.is_packaged else
+                        "development"
+                    ),
                 )
-                if self._state["install_phase"] == "restarting" and not update_available:
-                    self._clear_completed_install()
+
+                repository = await self._repository_name()
+                release = await self.release_fetcher(repository)
+                if release is None or release.get("draft") or release.get("prerelease"):
+                    self._state.update(
+                        latest_version=None,
+                        latest_release_tag=None,
+                        latest_release_name=None,
+                        latest_release_url=None,
+                        latest_release_published_at=None,
+                        latest_release_notes=None,
+                        latest_release_asset_name=None,
+                        latest_release_asset_url=None,
+                        update_available=False,
+                        last_checked_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                else:
+                    tag = release.get("tag_name")
+                    if self.parse_stable_version(tag) is None:
+                        raise UpdateError(
+                            "The latest stable GitHub Release does not have a valid version tag."
+                        )
+                    release_url = release.get("html_url")
+                    if not isinstance(release_url, str) or not release_url.startswith(
+                        "https://github.com/"
+                    ):
+                        release_url = None
+                    asset_name, asset_url = self._release_asset(release, tag)
+                    self._state.update(
+                        latest_version=tag,
+                        latest_release_tag=tag,
+                        latest_release_name=release.get("name") or tag,
+                        latest_release_url=release_url,
+                        latest_release_published_at=release.get("published_at"),
+                        latest_release_notes=self._release_notes(release.get("body")),
+                        latest_release_asset_name=asset_name,
+                        latest_release_asset_url=asset_url,
+                        update_available=self.release_is_newer(installed, tag),
+                        last_checked_at=datetime.now(timezone.utc).isoformat(),
+                    )
             except UpdateError as exc:
                 self._state.update(
                     update_available=False,
@@ -146,22 +338,6 @@ class ApplicationUpdater:
             finally:
                 self._state["checking"] = False
             return dict(self._state)
-
-    async def _is_ancestor(self, older: str, newer: str) -> bool:
-        def run() -> int:
-            return subprocess.run(
-                ["git", "merge-base", "--is-ancestor", older, newer],
-                cwd=self.project_root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-                check=False,
-            ).returncode
-
-        try:
-            return await asyncio.to_thread(run) == 0
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise UpdateError(f"Could not compare local and remote commits: {exc}") from exc
 
     def _warn_check_failure(self, message: str) -> None:
         now = datetime.now(timezone.utc)
@@ -178,12 +354,14 @@ class ApplicationUpdater:
             state = await self.check()
             if state["error"]:
                 raise UpdateError(state["error"])
-            if not state["update_available"]:
-                raise UpdateError("No application update is available.")
+            if not state["update_available"] or not state["latest_release_tag"]:
+                raise UpdateError("No newer stable application release is available.")
+            if not state["install_supported"]:
+                raise UpdateError(
+                    state["install_unavailable_reason"]
+                    or "Automatic installation is not supported for this deployment."
+                )
 
-            branch = await self._run_git("branch", "--show-current")
-            if branch != "main":
-                raise UpdateError(f"Updates require the main branch; currently on {branch or 'detached HEAD'}.")
             dirty = await self._run_git("status", "--porcelain", "--untracked-files=no")
             if dirty:
                 raise UpdateError("Tracked local changes are present. Commit or restore them before updating.")
@@ -193,7 +371,12 @@ class ApplicationUpdater:
             try:
                 log_file = self.log_path.open("a", encoding="utf-8")
                 self._install_process = subprocess.Popen(
-                    ["bash", str(self.script_path), str(self.project_root)],
+                    [
+                        "bash",
+                        str(self.script_path),
+                        str(self.project_root),
+                        state["latest_release_tag"],
+                    ],
                     cwd=self.project_root,
                     stdin=subprocess.DEVNULL,
                     stdout=log_file,
@@ -205,11 +388,7 @@ class ApplicationUpdater:
             except OSError as exc:
                 raise UpdateError(f"Could not start the update process: {exc}") from exc
 
-            self._state.update(
-                installing=True,
-                install_phase="preparing",
-                error=None,
-            )
+            self._state.update(installing=True, install_phase="preparing", error=None)
             asyncio.create_task(self._watch_install(self._install_process))
             return dict(self._state)
 
@@ -245,13 +424,6 @@ class ApplicationUpdater:
             return "Application update failed. Check the service journal for details."
         details = [line.strip() for line in lines if line.strip()][-3:]
         return " ".join(details)[-500:] if details else "Application update failed."
-
-    def _clear_completed_install(self) -> None:
-        self._state.update(installing=False, install_phase="complete", error=None)
-        try:
-            self.phase_path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     async def background_loop(self) -> None:
         while True:

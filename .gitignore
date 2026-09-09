@@ -6,3 +6,6 @@ venv/
 database/*.db
 .update.log
 .update-status
+build/
+dist/
+*.spec.bak

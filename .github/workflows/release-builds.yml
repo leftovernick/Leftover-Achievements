@@ -1,0 +1,192 @@
+name: Build packaged release assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name }}
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  macos-arm64:
+    name: macOS arm64 package
+    if: github.event.release.draft == false && github.event.release.prerelease == false
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: arm64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Verify stable release tag and exact source revision
+        shell: bash
+        run: |
+          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
+          test "$(git tag --points-at HEAD --list "$RELEASE_TAG")" = "$RELEASE_TAG"
+
+      - name: Create clean build environment
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+          .venv/bin/pip install -r requirements-build.txt
+
+      - name: Build and validate package
+        shell: bash
+        env:
+          LEFTOVER_BUILD_VERSION: ${{ env.RELEASE_TAG }}
+        run: ./scripts/build-macos.sh
+
+      - name: Smoke-test frozen server
+        shell: bash
+        run: |
+          artifact="LeftoverAchievements-macOS-arm64-$RELEASE_TAG"
+          executable="dist/$artifact.app/Contents/MacOS/$artifact"
+          test -x "$executable"
+          export LEFTOVER_DATA_DIR="$RUNNER_TEMP/leftover-smoke-macos"
+          export LEFTOVER_PORT=18765
+          "$executable" &
+          server_pid=$!
+          cleanup() {
+            kill -TERM "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error \
+              "http://127.0.0.1:$LEFTOVER_PORT/api/update/status" \
+              --output "$RUNNER_TEMP/update-status.json"; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo "Frozen server exited before becoming ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          test -s "$RUNNER_TEMP/update-status.json"
+          python -c 'import json, os; from pathlib import Path; payload=json.loads(Path(os.environ["RUNNER_TEMP"], "update-status.json").read_text()); assert payload["installed_version"] == os.environ["RELEASE_TAG"], payload'
+
+      - name: Attach macOS ZIP to this release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="dist/releases/LeftoverAchievements-macOS-arm64-$RELEASE_TAG.zip"
+          test -s "$asset"
+          gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
+
+  windows-x64:
+    name: Windows x64 package
+    if: github.event.release.draft == false && github.event.release.prerelease == false
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Verify stable release tag and exact source revision
+        shell: pwsh
+        run: |
+          python -c 'import os; from scripts.validate_release_package import stable_version; stable_version(os.environ["RELEASE_TAG"])'
+          if ((git rev-parse HEAD) -ne (git rev-list -n 1 $env:RELEASE_TAG)) {
+            throw "Checked-out commit does not match release tag $env:RELEASE_TAG."
+          }
+          if ((git tag --points-at HEAD --list $env:RELEASE_TAG) -ne $env:RELEASE_TAG) {
+            throw "HEAD is not tagged with release tag $env:RELEASE_TAG."
+          }
+
+      - name: Create clean build environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\pip.exe install -r requirements.txt
+          .\.venv\Scripts\pip.exe install -r requirements-build.txt
+
+      - name: Build and validate package
+        shell: pwsh
+        env:
+          LEFTOVER_BUILD_VERSION: ${{ env.RELEASE_TAG }}
+        run: .\scripts\build-windows.ps1
+
+      - name: Smoke-test frozen server
+        shell: pwsh
+        run: |
+          $Artifact = "LeftoverAchievements-Windows-x64-$env:RELEASE_TAG"
+          $Executable = Join-Path $PWD "dist\$Artifact\$Artifact.exe"
+          if (-not (Test-Path $Executable -PathType Leaf)) {
+            throw "Expected executable is missing: $Executable"
+          }
+          $env:LEFTOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP "leftover-smoke-windows"
+          $env:LEFTOVER_PORT = "18765"
+          $Server = Start-Process -FilePath $Executable -PassThru
+          try {
+            $Status = $null
+            for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
+              if ($Server.HasExited) {
+                throw "Frozen server exited before becoming ready."
+              }
+              try {
+                $Status = Invoke-RestMethod -Uri "http://127.0.0.1:$env:LEFTOVER_PORT/api/update/status" -TimeoutSec 2
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if ($null -eq $Status) {
+              throw "Frozen server did not become ready."
+            }
+            if ($Status.installed_version -ne $env:RELEASE_TAG) {
+              throw "Embedded version '$($Status.installed_version)' does not match '$env:RELEASE_TAG'."
+            }
+          } finally {
+            if (-not $Server.HasExited) {
+              Stop-Process -Id $Server.Id -Force
+              $Server.WaitForExit()
+            }
+          }
+
+      - name: Attach Windows ZIP to this release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $Asset = "dist\releases\LeftoverAchievements-Windows-x64-$env:RELEASE_TAG.zip"
+          if (-not (Test-Path $Asset -PathType Leaf)) {
+            throw "Expected release asset is missing: $Asset"
+          }
+          gh release upload $env:RELEASE_TAG $Asset --clobber --repo $env:GITHUB_REPOSITORY

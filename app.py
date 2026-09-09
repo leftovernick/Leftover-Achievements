@@ -6,7 +6,6 @@ import base64
 import io
 import socket
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from urllib.parse import urlencode
 
 import aiohttp
@@ -15,9 +14,12 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
+from runtime import runtime
 
 
-load_dotenv()
+runtime.ensure_runtime_directories()
+if not runtime.is_packaged:
+    load_dotenv(runtime.resource_path(".env"))
 
 from database import database as db
 from services.retroachievements import RetroAchievements
@@ -25,12 +27,21 @@ from services.updater import ApplicationUpdater, UpdateError
 
 
 app = FastAPI(title="LeftoverAchievements Display")
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory=str(runtime.resource_path("static"))), name="static")
+app.mount(
+    "/runtime-audio",
+    StaticFiles(directory=str(runtime.mutable_audio_dir)),
+    name="runtime-audio",
+)
+templates = Jinja2Templates(directory=str(runtime.resource_path("templates")))
 
 db.init_db()
-ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or os.getenv("RA_API_KEY"))
-application_updater = ApplicationUpdater(Path(__file__).resolve().parent)
+legacy_environment_api_key = None if runtime.is_packaged else os.getenv("RA_API_KEY")
+ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or legacy_environment_api_key)
+application_updater = ApplicationUpdater(
+    runtime.resource_root,
+    runtime_environment=runtime,
+)
 RECENT_ACTIVITY_LIMIT = 5
 RECENT_ACTIVITY_FETCH_MINUTES = 43200
 WEEKLY_CACHE_TTL = timedelta(minutes=10)
@@ -74,7 +85,7 @@ DEFAULT_DISPLAY_SECTION_SECONDS = {
 }
 MIN_DISPLAY_SECTION_SECONDS = 5
 MAX_DISPLAY_SECTION_SECONDS = 180
-STATIC_AUDIO_DIR = os.path.join("static", "audio")
+STATIC_AUDIO_DIR = str(runtime.mutable_audio_dir)
 CUSTOM_AUDIO_KINDS = ("achievement", "beaten", "mastery")
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg"}
 MAX_CUSTOM_AUDIO_BYTES = 10 * 1024 * 1024
@@ -115,13 +126,13 @@ def onboarding_redirect(step: int, message: str | None = None, status: str | Non
 def ra_api_key_source() -> str | None:
     if db.get_setting("ra_api_key"):
         return "settings"
-    if os.getenv("RA_API_KEY"):
+    if legacy_environment_api_key:
         return "environment"
     return None
 
 
 def configured_ra_api_key() -> str | None:
-    return db.get_setting("ra_api_key") or os.getenv("RA_API_KEY")
+    return db.get_setting("ra_api_key") or legacy_environment_api_key
 
 
 def ra_connection_status() -> str:
@@ -557,7 +568,7 @@ def configured_audio_sources() -> dict[str, str]:
             or not os.path.isfile(path)
         ):
             continue
-        sources[kind] = f"/static/audio/{filename}?v={int(os.path.getmtime(path))}"
+        sources[kind] = f"/runtime-audio/{filename}?v={int(os.path.getmtime(path))}"
     return sources
 
 
@@ -1223,7 +1234,7 @@ async def charts(request: Request):
         request=request,
         name="charts.html",
         context={
-            "chart_js_version": static_asset_version(os.path.join("static", "js", "charts.js")),
+            "chart_js_version": static_asset_version(str(runtime.resource_path("static", "js", "charts.js"))),
         },
     )
 
@@ -1350,6 +1361,18 @@ async def start_background_polling():
 @app.on_event("shutdown")
 async def stop_update_polling():
     await application_updater.stop()
+    background_tasks = [
+        weekly_refresh_task,
+        history_backfill_task,
+        user_snapshot_refresh_task,
+        recent_activity_refresh_task,
+        achievement_poll_task,
+    ]
+    active_tasks = [task for task in background_tasks if task and not task.done()]
+    for task in active_tasks:
+        task.cancel()
+    if active_tasks:
+        await asyncio.gather(*active_tasks, return_exceptions=True)
 
 
 async def dashboard_context():
@@ -1421,7 +1444,7 @@ async def dashboard_context():
         "recent_activity": recent_activity,
         "audio_enabled": db.audio_enabled(),
         "audio_sources": configured_audio_sources(),
-        "display_js_version": static_asset_version(os.path.join("static", "js", "display.js")),
+        "display_js_version": static_asset_version(str(runtime.resource_path("static", "js", "display.js"))),
         "display_section_durations": display_section_durations(),
         "ra_connection_status": ra_connection_status(),
     }
@@ -1443,7 +1466,7 @@ async def admin(request: Request, message: str = None):
             "ra_connection_status": ra_connection_status(),
             "setup_complete": db.setup_complete(),
             "update_status": await application_updater.status(),
-            "update_js_version": static_asset_version(os.path.join("static", "js", "update.js")),
+            "update_js_version": static_asset_version(str(runtime.resource_path("static", "js", "update.js"))),
         },
     )
 
