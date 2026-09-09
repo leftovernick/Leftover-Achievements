@@ -93,6 +93,16 @@ class RetroAchievements:
             "retro_points": int(data.get("TotalTruePoints") or data.get("totalTruePoints") or 0),
         }
 
+    async def validate_api_key(self) -> bool:
+        """Verify this key with a small, user-independent official API request."""
+        if not self.api_key:
+            return False
+
+        data = await self._get_json("API_GetGame.php", {"i": 1})
+        if not isinstance(data, dict):
+            return False
+        return bool(data.get("Title") or data.get("GameTitle") or data.get("title"))
+
     async def user_summary(self, username: str, recent_games_count: int = 1) -> dict:
         """Return raw user summary data from RetroAchievements."""
         if not self.api_key:

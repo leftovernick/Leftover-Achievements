@@ -28,6 +28,12 @@
         </div>
       </section>
 
+      {% if ra_connection_status in ['invalid', 'missing', 'unverified'] %}
+        <div class="message warning-message">
+          RetroAchievements needs attention. <a href="/admin">Check the connection in Settings.</a>
+        </div>
+      {% endif %}
+
       <section class="panel current-activity-panel">
         <div class="panel-header">
           <h2>Current Activity</h2>

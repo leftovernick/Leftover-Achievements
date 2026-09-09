@@ -8,14 +8,37 @@
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const carouselTransitionDuration = reducedMotion ? 1 : 650;
+  const GESTURE = Object.freeze({
+    edgeSize: 64,
+    horizontalDistance: 72,
+    verticalDistance: 64,
+    horizontalDominance: 1.2,
+    verticalDominance: 1.15,
+  });
+  const ROTATION_SPEEDS = Object.freeze({ slow: 1.5, normal: 1, fast: 0.5 });
+  const STORAGE_KEYS = Object.freeze({
+    muted: 'leftover-display-muted',
+    speed: 'leftover-display-rotation-speed',
+  });
 
   const firstSlideClone = slides[0].cloneNode(true);
   firstSlideClone.classList.remove('is-active');
   firstSlideClone.dataset.carouselClone = 'true';
   firstSlideClone.setAttribute('aria-hidden', 'true');
   carouselTrack.appendChild(firstSlideClone);
+  const lastSlideClone = slides[slides.length - 1].cloneNode(true);
+  lastSlideClone.classList.remove('is-active');
+  lastSlideClone.dataset.carouselClone = 'true';
+  lastSlideClone.setAttribute('aria-hidden', 'true');
+  carouselTrack.prepend(lastSlideClone);
 
   const notification = document.querySelector('[data-achievement-notification]');
+  const dashboardPanel = document.querySelector('[data-dashboard-panel]');
+  const dashboardQr = document.querySelector('[data-dashboard-qr]');
+  const dashboardQrError = document.querySelector('[data-dashboard-qr-error]');
+  const settingsPanel = document.querySelector('[data-settings-panel]');
+  const audioState = document.querySelector('[data-audio-state]');
+  const rotationState = document.querySelector('[data-rotation-state]');
   const audioEnabled = root.dataset.audioEnabled === 'true';
   let customAudioSources = {};
   try {
@@ -53,7 +76,24 @@
   let scrollLastFrameAt = 0;
   let rotationPaused = false;
   let carouselTransitioning = false;
-  let carouselPosition = currentIndex;
+  let carouselPosition = currentIndex + 1;
+  let openPanel = null;
+  const pauseReasons = new Set();
+  let audioMuted = false;
+  let rotationSpeed = 'normal';
+
+  dashboardQr?.addEventListener('error', () => {
+    dashboardQr.hidden = true;
+    if (dashboardQrError) dashboardQrError.classList.add('is-visible');
+  });
+
+  try {
+    audioMuted = window.localStorage.getItem(STORAGE_KEYS.muted) === 'true';
+    const savedSpeed = window.localStorage.getItem(STORAGE_KEYS.speed);
+    if (savedSpeed && Object.prototype.hasOwnProperty.call(ROTATION_SPEEDS, savedSpeed)) rotationSpeed = savedSpeed;
+  } catch (error) {
+    console.info('Display preferences are unavailable', error);
+  }
 
   const setText = (selector, value) => {
     const element = notification?.querySelector(selector);
@@ -91,6 +131,7 @@
   };
 
   const playGeneratedAchievementSound = () => {
+    if (audioMuted) return;
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
@@ -126,7 +167,7 @@
   };
 
   const enableDisplayAudio = async () => {
-    if (!audioEnabled) return;
+    if (!audioEnabled || audioMuted) return;
 
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -149,7 +190,7 @@
   };
 
   const playAchievementSound = async (type = 'achievement', event = {}) => {
-    if (!audioEnabled) return;
+    if (!audioEnabled || audioMuted) return;
 
     if (event.audio_sources && typeof event.audio_sources === 'object') {
       customAudioSources = event.audio_sources;
@@ -231,13 +272,19 @@
     }
   };
 
+  const slideDuration = (slide = slides[currentIndex]) => {
+    const normalDuration = Number.parseInt(slide.dataset.duration || '60000', 10);
+    return Math.round(normalDuration * ROTATION_SPEEDS[rotationSpeed]);
+  };
+
   const scheduleNextSlide = (durationOverride = null, preserveScroll = false) => {
     clearRotationTimers();
 
     rotationPaused = false;
     const activeSlide = slides[currentIndex];
-    const duration = durationOverride ?? Number.parseInt(activeSlide.dataset.duration || '60000', 10);
+    const duration = durationOverride ?? slideDuration(activeSlide);
     activeDuration = duration;
+    remainingDuration = duration;
     slideStartedAt = window.performance.now();
     startLeaderboardScroll(activeSlide, preserveScroll);
     timerId = window.setTimeout(() => activateSlide(currentIndex + 1), duration);
@@ -249,25 +296,41 @@
     if (!carouselTransitioning) return;
 
     carouselTransitioning = false;
-    if (carouselPosition === slides.length) setCarouselPosition(0, false);
+    if (carouselPosition === slides.length + 1) setCarouselPosition(1, false);
+    if (carouselPosition === 0) setCarouselPosition(slides.length, false);
   };
 
   const activateSlide = (nextIndex) => {
+    if (carouselTransitioning) return;
     clearRotationTimers();
     const previousIndex = currentIndex;
-    const wrapping = nextIndex >= slides.length;
-    currentIndex = nextIndex % slides.length;
+    const wrappingForward = nextIndex >= slides.length;
+    const wrappingBackward = nextIndex < 0;
+    currentIndex = (nextIndex + slides.length) % slides.length;
     slides[previousIndex].classList.remove('is-active');
     slides[currentIndex].classList.add('is-active');
 
     carouselTransitioning = true;
-    setCarouselPosition(wrapping ? slides.length : currentIndex);
-    scheduleNextSlide();
+    setCarouselPosition(wrappingForward ? slides.length + 1 : (wrappingBackward ? 0 : currentIndex + 1));
+    activeDuration = slideDuration();
+    remainingDuration = activeDuration;
+    slideStartedAt = window.performance.now();
+    scrollCycleElapsed = 0;
+    const list = slides[currentIndex].querySelector('.display-ranking-list, .display-activity-list');
+    if (list) list.style.transform = 'translate3d(0, 0, 0)';
+    if (pauseReasons.size === 0) {
+      scheduleNextSlide();
+    } else {
+      rotationPaused = true;
+    }
     transitionTimerId = window.setTimeout(finishCarouselTransition, carouselTransitionDuration + 50);
   };
 
-  const pauseRotation = () => {
-    if (rotationPaused) return;
+  const pauseRotation = (reason) => {
+    if (pauseReasons.has(reason)) return;
+    const wasRunning = pauseReasons.size === 0;
+    pauseReasons.add(reason);
+    if (!wasRunning) return;
     rotationPaused = true;
 
     if (carouselTransitioning) {
@@ -279,8 +342,9 @@
     clearRotationTimers();
   };
 
-  const resumeRotation = () => {
-    if (!rotationPaused) return;
+  const resumeRotation = (reason) => {
+    pauseReasons.delete(reason);
+    if (pauseReasons.size > 0 || !rotationPaused) return;
     scheduleNextSlide(remainingDuration, true);
   };
 
@@ -352,7 +416,8 @@
     const event = notificationQueue.shift();
     const eventType = event.type || 'achievement';
     notificationActive = true;
-    pauseRotation();
+    pauseRotation('notification');
+    if (openPanel) closePanel();
 
     if (eventType === 'mastery') {
       renderMasteryNotification(event);
@@ -371,7 +436,7 @@
       if (notificationQueue.length > 0) {
         window.setTimeout(showNextNotification, 250);
       } else {
-        resumeRotation();
+        resumeRotation('notification');
       }
     }, event.duration_ms || 10000);
   };
@@ -394,24 +459,145 @@
     events.addEventListener('mastery', enqueueEvent);
   };
 
+  const storePreference = (key, value) => {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (error) {
+      console.info('Could not save display preference', error);
+    }
+  };
+
+  const updateQuickSettings = () => {
+    if (audioState) audioState.textContent = !audioEnabled ? 'Disabled in dashboard' : (audioMuted ? 'Muted' : 'On');
+    if (rotationState) rotationState.textContent = pauseReasons.has('manual') ? 'Paused' : 'Rotating';
+    document.querySelectorAll('[data-speed]').forEach((button) => {
+      const selected = button.dataset.speed === rotationSpeed;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    const audioButton = document.querySelector('[data-audio-toggle]');
+    if (audioButton) {
+      audioButton.disabled = !audioEnabled;
+      audioButton.setAttribute('aria-pressed', String(audioMuted));
+    }
+    const rotationButton = document.querySelector('[data-rotation-toggle]');
+    if (rotationButton) rotationButton.setAttribute('aria-pressed', String(pauseReasons.has('manual')));
+  };
+
+  const showPanel = (panel) => {
+    if (!panel || notificationActive || notificationQueue.length > 0 || openPanel) return;
+    openPanel = panel;
+    pauseRotation('panel');
+    panel.classList.add('is-open');
+    panel.setAttribute('aria-hidden', 'false');
+    panel.querySelector('.display-close-button')?.focus({ preventScroll: true });
+  };
+
+  const closePanel = () => {
+    if (!openPanel) return;
+    const panel = openPanel;
+    openPanel = null;
+    panel.classList.remove('is-open');
+    panel.setAttribute('aria-hidden', 'true');
+    resumeRotation('panel');
+    root.focus({ preventScroll: true });
+  };
+
+  document.querySelectorAll('[data-close-panel]').forEach((button) => {
+    button.addEventListener('click', closePanel);
+  });
+
+  document.querySelector('[data-audio-toggle]')?.addEventListener('click', () => {
+    audioMuted = !audioMuted;
+    storePreference(STORAGE_KEYS.muted, String(audioMuted));
+    updateQuickSettings();
+    if (!audioMuted) enableDisplayAudio();
+  });
+
+  document.querySelector('[data-rotation-toggle]')?.addEventListener('click', () => {
+    if (pauseReasons.has('manual')) {
+      resumeRotation('manual');
+    } else {
+      pauseRotation('manual');
+    }
+    updateQuickSettings();
+  });
+
+  document.querySelectorAll('[data-speed]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const selectedSpeed = button.dataset.speed;
+      if (!Object.prototype.hasOwnProperty.call(ROTATION_SPEEDS, selectedSpeed)) return;
+      rotationSpeed = selectedSpeed;
+      storePreference(STORAGE_KEYS.speed, rotationSpeed);
+      activeDuration = slideDuration();
+      remainingDuration = activeDuration;
+      updateQuickSettings();
+    });
+  });
+
+  let pointerGesture = null;
+  root.addEventListener('pointerdown', (event) => {
+    if (openPanel || notificationActive || event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    pointerGesture = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      fromTop: event.clientY <= GESTURE.edgeSize,
+      fromBottom: event.clientY >= window.innerHeight - GESTURE.edgeSize,
+    };
+    root.setPointerCapture?.(event.pointerId);
+  });
+
+  root.addEventListener('pointerup', (event) => {
+    if (!pointerGesture || pointerGesture.id !== event.pointerId) return;
+    const gesture = pointerGesture;
+    pointerGesture = null;
+    if (root.hasPointerCapture?.(event.pointerId)) root.releasePointerCapture(event.pointerId);
+    if (notificationActive || notificationQueue.length > 0) return;
+
+    const deltaX = event.clientX - gesture.x;
+    const deltaY = event.clientY - gesture.y;
+    const absX = Math.abs(deltaX);
+    const absY = Math.abs(deltaY);
+    const horizontal = absX >= GESTURE.horizontalDistance && absX > absY * GESTURE.horizontalDominance;
+    if (horizontal) {
+      activateSlide(currentIndex + (deltaX < 0 ? 1 : -1));
+      return;
+    }
+
+    const vertical = absY >= GESTURE.verticalDistance && absY > absX * GESTURE.verticalDominance;
+    if (vertical && gesture.fromTop && deltaY > 0) showPanel(settingsPanel);
+    if (vertical && gesture.fromBottom && deltaY < 0) showPanel(dashboardPanel);
+  });
+
+  root.addEventListener('pointercancel', () => { pointerGesture = null; });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closePanel();
+  });
+
   slides.forEach((slide, index) => {
     slide.classList.toggle('is-active', index === currentIndex);
     const list = slide.querySelector('.display-ranking-list, .display-activity-list');
     if (list) list.style.transform = 'translate3d(0, 0, 0)';
   });
 
-  setCarouselPosition(currentIndex, false);
+  root.tabIndex = -1;
+  setCarouselPosition(currentIndex + 1, false);
   scheduleNextSlide();
   connectAchievementEvents();
+  updateQuickSettings();
 
   if (audioEnabled) {
     document.addEventListener('pointerdown', enableDisplayAudio, { once: true });
     document.addEventListener('keydown', enableDisplayAudio, { once: true });
   }
 
-  window.setTimeout(() => {
-    if (document.visibilityState === 'visible' && !notificationActive) {
+  const reloadWhenIdle = () => {
+    if (document.visibilityState === 'visible' && !notificationActive && notificationQueue.length === 0 && !openPanel) {
       window.location.reload();
+      return;
     }
-  }, 15 * 60 * 1000);
+    window.setTimeout(reloadWhenIdle, 60 * 1000);
+  };
+  window.setTimeout(reloadWhenIdle, 15 * 60 * 1000);
 })();

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Display</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=console-display-4" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=console-display-touch-2" />
   </head>
   <body class="pi-display">
     <main class="display-shell" data-display-rotation data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
@@ -117,6 +117,50 @@
       </section>
       </div>
     </main>
+
+    <section class="display-utility-layer display-dashboard-panel" data-dashboard-panel aria-hidden="true" aria-labelledby="dashboard-panel-title">
+      <button class="display-utility-backdrop" type="button" data-close-panel aria-label="Close dashboard connection panel"></button>
+      <div class="display-utility-card" role="dialog" aria-modal="true">
+        <div class="display-utility-heading">
+          <div><span class="display-eyebrow">Connect another device</span><h2 id="dashboard-panel-title">Dashboard Connection</h2></div>
+          <button class="display-close-button" type="button" data-close-panel aria-label="Close dashboard connection panel">Close</button>
+        </div>
+        <div class="display-connection-content">
+          <div class="display-dashboard-qr-frame">
+            <img class="display-dashboard-qr" data-dashboard-qr src="/display/dashboard-qr.png" alt="QR code for {{ dashboard_url }}" />
+            <p class="display-dashboard-qr-error" data-dashboard-qr-error role="status">QR code unavailable. Open the URL shown here instead.</p>
+          </div>
+          <div class="display-connection-details">
+            <span>Scan or open</span>
+            <strong>{{ dashboard_url }}</strong>
+            {% if hostname %}<p>Hostname <b>{{ hostname }}</b></p>{% endif %}
+            {% if lan_ip %}<p>LAN IP <b>{{ lan_ip }}</b></p>{% endif %}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="display-utility-layer display-settings-panel" data-settings-panel aria-hidden="true" aria-labelledby="settings-panel-title">
+      <button class="display-utility-backdrop" type="button" data-close-panel aria-label="Close quick settings"></button>
+      <div class="display-utility-card display-settings-card" role="dialog" aria-modal="true">
+        <div class="display-utility-heading">
+          <div><span class="display-eyebrow">Display controls</span><h2 id="settings-panel-title">Quick Settings</h2></div>
+          <button class="display-close-button" type="button" data-close-panel>Close</button>
+        </div>
+        <div class="display-quick-controls">
+          <button class="display-setting-button" type="button" data-audio-toggle><span>Audio</span><strong data-audio-state>On</strong></button>
+          <button class="display-setting-button" type="button" data-rotation-toggle><span>Carousel</span><strong data-rotation-state>Rotating</strong></button>
+          <fieldset class="display-speed-control">
+            <legend>Rotation speed</legend>
+            <div>
+              <button type="button" data-speed="slow">Slow</button>
+              <button type="button" data-speed="normal">Normal</button>
+              <button type="button" data-speed="fast">Fast</button>
+            </div>
+          </fieldset>
+        </div>
+      </div>
+    </section>
 
     <aside class="achievement-notification" data-achievement-notification aria-live="polite">
       <div class="achievement-notification-shell">

@@ -213,6 +213,13 @@ def init_db():
         """,
         (datetime.now(timezone.utc).isoformat(),),
     )
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+        VALUES ('setup_complete', '0', ?)
+        """,
+        (datetime.now(timezone.utc).isoformat(),),
+    )
     conn.commit()
     conn.close()
 
@@ -1045,6 +1052,14 @@ def set_setting(key: str, value: str):
             (key, value, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
+
+
+def setup_complete() -> bool:
+    return get_setting("setup_complete", "0") == "1"
+
+
+def set_setup_complete(complete: bool):
+    set_setting("setup_complete", "1" if complete else "0")
 
 
 def audio_enabled() -> bool:

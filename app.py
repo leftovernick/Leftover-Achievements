@@ -2,12 +2,15 @@ import os
 import asyncio
 import json
 import logging
+import base64
+import io
+import socket
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import aiohttp
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
@@ -85,6 +88,7 @@ HISTORY_WEEK_COUNT = 4
 HISTORY_WEEKS_PAGE_SIZE = 5
 HISTORY_PAGE_WAIT_SECONDS = 20
 CHART_WEEK_RANGES = (4, 8, 12)
+RA_CONNECTION_CHECK_TTL = timedelta(minutes=15)
 logger = logging.getLogger(__name__)
 
 
@@ -96,12 +100,109 @@ def users_redirect(message: str) -> RedirectResponse:
     return RedirectResponse(url=f"/users?{urlencode({'message': message})}", status_code=303)
 
 
+def onboarding_redirect(step: int, message: str | None = None, status: str | None = None) -> RedirectResponse:
+    params = {"step": step}
+    if message:
+        params["message"] = message
+    if status:
+        params["status"] = status
+    return RedirectResponse(url=f"/onboarding?{urlencode(params)}", status_code=303)
+
+
 def ra_api_key_source() -> str | None:
     if db.get_setting("ra_api_key"):
         return "settings"
     if os.getenv("RA_API_KEY"):
         return "environment"
     return None
+
+
+def configured_ra_api_key() -> str | None:
+    return db.get_setting("ra_api_key") or os.getenv("RA_API_KEY")
+
+
+def ra_connection_status() -> str:
+    if not configured_ra_api_key():
+        return "missing"
+    return db.get_setting("ra_api_key_status", "unverified") or "unverified"
+
+
+async def validate_ra_api_key(api_key: str) -> bool:
+    try:
+        return await RetroAchievements(api_key=api_key).validate_api_key()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return False
+
+
+def record_ra_connection(valid: bool):
+    db.set_setting("ra_api_key_status", "connected" if valid else "invalid")
+    db.set_setting("ra_api_key_checked_at", datetime.now(timezone.utc).isoformat())
+
+
+async def refresh_ra_connection_if_stale():
+    api_key = configured_ra_api_key()
+    if not api_key:
+        return
+    checked_at = parse_iso_datetime(db.get_setting("ra_api_key_checked_at"))
+    if checked_at and datetime.now(timezone.utc) - checked_at < RA_CONNECTION_CHECK_TTL:
+        return
+    record_ra_connection(await validate_ra_api_key(api_key))
+
+
+def local_device_details(request: Request) -> dict:
+    hostname = socket.gethostname().split(".")[0]
+    lan_ip = None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            candidate = sock.getsockname()[0]
+            if candidate and not candidate.startswith("127."):
+                lan_ip = candidate
+    except OSError:
+        pass
+
+    request_host = request.url.hostname
+    if request_host and request_host not in {"127.0.0.1", "localhost", "0.0.0.0"}:
+        onboarding_host = request_host
+    elif lan_ip:
+        onboarding_host = lan_ip
+    elif hostname and hostname.lower() != "localhost":
+        onboarding_host = f"{hostname}.local"
+    else:
+        onboarding_host = "127.0.0.1"
+
+    port = request.url.port or 8000
+    dashboard_url = f"http://{onboarding_host}:{port}/"
+    onboarding_url = f"{dashboard_url}onboarding"
+    return {
+        "hostname": hostname or None,
+        "lan_ip": lan_ip,
+        "dashboard_url": dashboard_url,
+        "dashboard_qr": qr_code_data_url(dashboard_url),
+        "onboarding_url": onboarding_url,
+        "onboarding_qr": qr_code_data_url(onboarding_url),
+    }
+
+
+def qr_code_data_url(value: str) -> str | None:
+    image_bytes = qr_code_png(value)
+    if image_bytes is None:
+        return None
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def qr_code_png(value: str) -> bytes | None:
+    try:
+        import qrcode
+
+        image = qrcode.make(value, box_size=10, border=4)
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        return output.getvalue()
+    except (ImportError, OSError, ValueError):
+        logger.warning("Could not generate a QR code.", exc_info=True)
+        return None
 
 
 def current_week_range() -> tuple[datetime, datetime]:
@@ -890,12 +991,150 @@ def parse_iso_datetime(value: str | None) -> datetime | None:
 
 @app.get("/")
 async def dashboard(request: Request):
+    if not db.setup_complete():
+        return RedirectResponse(url="/onboarding", status_code=307)
+    await refresh_ra_connection_if_stale()
     context = await dashboard_context()
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context=context,
     )
+
+
+@app.get("/onboarding")
+async def onboarding(
+    request: Request,
+    step: int = 1,
+    message: str | None = None,
+    status: str | None = None,
+):
+    step = max(1, min(5, step))
+    if step >= 3 and ra_connection_status() != "connected":
+        step = 2
+        message = message or "Connect RetroAchievements to continue."
+        status = status or "error"
+    elif step >= 4 and db.tracked_user_count() < 1:
+        step = 3
+        message = message or "Add at least one player to continue."
+        status = status or "error"
+    tracked_users = db.get_tracked_users()
+    profiles = db.get_user_profiles()
+    players = []
+    for user in tracked_users:
+        profile = profiles.get(user["ra_username"].lower(), {})
+        players.append(
+            {
+                **user,
+                "username": profile.get("canonical_username") or user["ra_username"],
+                "avatar": profile.get("avatar"),
+                "hardcore_points": profile.get("hardcore_points"),
+            }
+        )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="onboarding.html",
+        context={
+            "step": step,
+            "message": message,
+            "message_status": status,
+            "api_key_configured": bool(configured_ra_api_key()),
+            "api_connection_status": ra_connection_status(),
+            "players": players,
+            "setup_complete": db.setup_complete(),
+        },
+    )
+
+
+@app.post("/onboarding/welcome")
+async def onboarding_welcome():
+    return onboarding_redirect(2)
+
+
+@app.post("/onboarding/api-key")
+async def onboarding_api_key(api_key: str = Form("")):
+    submitted_key = api_key.strip()
+    candidate = submitted_key or configured_ra_api_key()
+    if not candidate:
+        return onboarding_redirect(2, "Enter your RetroAchievements Web API key to continue.", "error")
+    if not await validate_ra_api_key(candidate):
+        if not submitted_key:
+            record_ra_connection(False)
+        return onboarding_redirect(
+            2,
+            "We couldn't connect with that key. Check it in your RetroAchievements control panel and try again.",
+            "error",
+        )
+
+    if submitted_key:
+        db.set_setting("ra_api_key", submitted_key)
+        ra_client.api_key = submitted_key
+    record_ra_connection(True)
+    return onboarding_redirect(3, "RetroAchievements is connected.", "success")
+
+
+@app.post("/onboarding/players/add")
+async def onboarding_add_player(username: str = Form(...)):
+    username = username.strip()
+    if not username:
+        return onboarding_redirect(3, "Enter a RetroAchievements username.", "error")
+    if ra_connection_status() != "connected" or not configured_ra_api_key():
+        return onboarding_redirect(2, "Connect RetroAchievements before adding players.", "error")
+
+    try:
+        info = await ra_client.lookup_user(username)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return onboarding_redirect(3, "We couldn't find that player. Check the username and try again.", "error")
+
+    canonical = info.get("username", username)
+    ulid = info.get("ulid")
+    if db.tracked_user_exists(canonical, ulid):
+        return onboarding_redirect(3, f"{canonical} is already being tracked.", "error")
+
+    db.add_tracked_user(canonical, ulid)
+    db.save_user_profile(canonical, info)
+    return onboarding_redirect(3, f"Added {canonical}.", "success")
+
+
+@app.post("/onboarding/players/remove")
+async def onboarding_remove_player(user_id: int = Form(...)):
+    db.remove_tracked_user(user_id)
+    return onboarding_redirect(3, "Player removed.", "success")
+
+
+@app.post("/onboarding/players/continue")
+async def onboarding_players_continue():
+    if ra_connection_status() != "connected" or not configured_ra_api_key():
+        return onboarding_redirect(2, "Connect RetroAchievements before continuing.", "error")
+    if db.tracked_user_count() < 1:
+        return onboarding_redirect(3, "Add at least one player to continue.", "error")
+    return onboarding_redirect(4)
+
+
+@app.post("/onboarding/display-ready")
+async def onboarding_display_ready():
+    if ra_connection_status() != "connected" or not configured_ra_api_key():
+        return onboarding_redirect(2, "Connect RetroAchievements before finishing setup.", "error")
+    if db.tracked_user_count() < 1:
+        return onboarding_redirect(3, "Add at least one player before finishing setup.", "error")
+    return onboarding_redirect(5)
+
+
+@app.post("/onboarding/finish")
+async def onboarding_finish(destination: str = Form("dashboard")):
+    api_key = configured_ra_api_key()
+    if not api_key or not await validate_ra_api_key(api_key):
+        if api_key:
+            record_ra_connection(False)
+        return onboarding_redirect(2, "Reconnect RetroAchievements before finishing setup.", "error")
+    record_ra_connection(True)
+    if db.tracked_user_count() < 1:
+        return onboarding_redirect(3, "Add at least one player before finishing setup.", "error")
+
+    db.set_setup_complete(True)
+    await start_background_polling()
+    return RedirectResponse(url="/display" if destination == "display" else "/", status_code=303)
 
 
 @app.get("/history")
@@ -1018,11 +1257,31 @@ async def weekly_chart_data(weeks: int = 8):
 
 @app.get("/display")
 async def display(request: Request):
+    if not db.setup_complete():
+        return templates.TemplateResponse(
+            request=request,
+            name="display_setup_required.html",
+            context=local_device_details(request),
+        )
     context = await dashboard_context()
+    context.update(local_device_details(request))
     return templates.TemplateResponse(
         request=request,
         name="display.html",
         context=context,
+    )
+
+
+@app.get("/display/dashboard-qr.png", include_in_schema=False)
+async def display_dashboard_qr(request: Request):
+    dashboard_url = local_device_details(request)["dashboard_url"]
+    image_bytes = qr_code_png(dashboard_url)
+    if image_bytes is None:
+        return Response(status_code=503)
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -1052,6 +1311,8 @@ async def display_events(request: Request):
 @app.on_event("startup")
 async def start_background_polling():
     global achievement_poll_task
+    if not db.setup_complete():
+        return
     schedule_history_backfill()
     if achievement_poll_task and not achievement_poll_task.done():
         return
@@ -1129,11 +1390,13 @@ async def dashboard_context():
         "audio_sources": configured_audio_sources(),
         "display_js_version": static_asset_version(os.path.join("static", "js", "display.js")),
         "display_section_durations": display_section_durations(),
+        "ra_connection_status": ra_connection_status(),
     }
 
 
 @app.get("/admin")
 async def admin(request: Request, message: str = None):
+    await refresh_ra_connection_if_stale()
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
@@ -1144,6 +1407,8 @@ async def admin(request: Request, message: str = None):
             "notification_durations": notification_durations(),
             "display_section_durations": display_section_durations(),
             "ra_api_key_source": ra_api_key_source(),
+            "ra_connection_status": ra_connection_status(),
+            "setup_complete": db.setup_complete(),
         },
     )
 
@@ -1195,9 +1460,19 @@ async def update_ra_api_key(api_key: str = Form(...)):
     if not api_key:
         return admin_redirect("RetroAchievements API key was not changed: enter a key first.")
 
+    if not await validate_ra_api_key(api_key):
+        return admin_redirect("That API key could not connect. Your current key was not changed.")
+
     db.set_setting("ra_api_key", api_key)
+    record_ra_connection(True)
     ra_client.api_key = api_key
-    return admin_redirect("RetroAchievements API key saved. The new key is active immediately.")
+    return admin_redirect("RetroAchievements API key verified and saved. The new key is active immediately.")
+
+
+@app.post("/admin/reset-onboarding")
+async def reset_onboarding():
+    db.set_setup_complete(False)
+    return onboarding_redirect(1, "Setup is ready to run again. Your players and history are still here.", "success")
 
 
 @app.post("/admin/settings")

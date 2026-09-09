@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Set Up LeftoverAchievements</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=onboarding-1" />
+  </head>
+  <body class="web-dashboard onboarding-page">
+    <header class="onboarding-header">
+      <a href="/onboarding" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" /><span>LeftoverAchievements</span></a>
+      <span>Setup guide</span>
+    </header>
+
+    <main class="onboarding-shell">
+      <ol class="onboarding-progress" aria-label="Setup progress">
+        {% for number, label in [(1, 'Welcome'), (2, 'Connect'), (3, 'Players'), (4, 'Display'), (5, 'Finish')] %}
+          <li class="{% if number == step %}is-current{% elif number < step %}is-complete{% endif %}" {% if number == step %}aria-current="step"{% endif %}>
+            <span>{{ number }}</span><small>{{ label }}</small>
+          </li>
+        {% endfor %}
+      </ol>
+
+      {% if message %}
+        <div class="message onboarding-message {% if message_status == 'error' %}error-message{% elif message_status == 'success' %}success-message{% endif %}" role="status">{{ message }}</div>
+      {% endif %}
+
+      <section class="panel onboarding-card">
+        {% if step == 1 %}
+          <div class="welcome-mark"><img src="/static/images/leftover-achievements-logo.png" alt="LeftoverAchievements" /></div>
+          <p class="eyebrow">Welcome</p>
+          <h1>Your achievements, together.</h1>
+          <p class="onboarding-lead">Track RetroAchievements players, compare rankings, follow recent activity, and power a display everyone can enjoy.</p>
+          <form method="post" action="/onboarding/welcome" class="onboarding-actions">
+            <button type="submit">Get Started</button>
+          </form>
+
+        {% elif step == 2 %}
+          <p class="eyebrow">Step 2 of 5</p>
+          <h1>Connect RetroAchievements</h1>
+          <p class="onboarding-lead">Connect your Web API key so LeftoverAchievements can load players, rankings, and activity.</p>
+          {% if api_key_configured %}
+            <div class="connection-state {% if api_connection_status == 'connected' %}is-connected{% endif %}">
+              <span class="status-dot"></span>
+              <strong>{% if api_connection_status == 'connected' %}A verified key is saved{% else %}A saved key is ready to test{% endif %}</strong>
+              <small>Your full key is never shown.</small>
+            </div>
+          {% endif %}
+          <form method="post" action="/onboarding/api-key" class="onboarding-form">
+            <label for="onboarding-api-key">Web API key</label>
+            <input id="onboarding-api-key" type="password" name="api_key" placeholder="{% if api_key_configured %}Enter a new key, or leave blank to test the saved key{% else %}Paste your Web API key{% endif %}" autocomplete="off" autocapitalize="none" spellcheck="false" {% if not api_key_configured %}required{% endif %} />
+            <p class="field-help">Find it in the Keys section of your <a href="https://retroachievements.org/controlpanel.php" target="_blank" rel="noreferrer">RetroAchievements control panel</a>.</p>
+            <div class="onboarding-actions split-actions">
+              <a href="/onboarding?step=1" class="text-link">Back</a>
+              <button type="submit">Test Connection &amp; Continue</button>
+            </div>
+          </form>
+
+        {% elif step == 3 %}
+          <p class="eyebrow">Step 3 of 5</p>
+          <h1>Add players</h1>
+          <p class="onboarding-lead">Choose the RetroAchievements players you want on the dashboard and display.</p>
+          <form method="post" action="/onboarding/players/add" class="onboarding-form player-add-form">
+            <label for="onboarding-username">RetroAchievements username</label>
+            <div class="inline-entry">
+              <input id="onboarding-username" name="username" placeholder="Enter a username" autocomplete="off" required />
+              <button type="submit">Add Player</button>
+            </div>
+          </form>
+          <div class="onboarding-player-list">
+            {% for player in players %}
+              <article class="onboarding-player">
+                {% if player.avatar %}<img src="{{ player.avatar }}" alt="{{ player.username }} avatar" />{% else %}<span class="avatar-placeholder">{{ player.username[0] }}</span>{% endif %}
+                <div><strong>{{ player.username }}</strong>{% if player.hardcore_points is not none %}<small>{{ "{:,}".format(player.hardcore_points) }} Hardcore points</small>{% endif %}</div>
+                <form method="post" action="/onboarding/players/remove">
+                  <input type="hidden" name="user_id" value="{{ player.id }}" />
+                  <button type="submit" class="quiet-button" aria-label="Remove {{ player.username }}">Remove</button>
+                </form>
+              </article>
+            {% else %}
+              <div class="onboarding-empty">No players added yet.</div>
+            {% endfor %}
+          </div>
+          <p class="history-note">Historical weekly data will be prepared automatically.</p>
+          <form method="post" action="/onboarding/players/continue" class="onboarding-actions split-actions">
+            <a href="/onboarding?step=2" class="text-link">Back</a>
+            <button type="submit">Continue</button>
+          </form>
+
+        {% elif step == 4 %}
+          <p class="eyebrow">Step 4 of 5</p>
+          <h1>Your display is ready</h1>
+          <p class="onboarding-lead">Everything needed for your LeftoverAchievements display is in place.</p>
+          <dl class="setup-summary">
+            <div><dt>RetroAchievements</dt><dd><span class="status-dot"></span> Connected</dd></div>
+            <div><dt>Tracked players</dt><dd>{{ players|length }}</dd></div>
+            <div><dt>Display</dt><dd>Ready</dd></div>
+          </dl>
+          <div class="display-preview-note">Open the display now to see its setup-ready screen, or finish setup to start the live rotation.</div>
+          <form method="post" action="/onboarding/display-ready" class="onboarding-actions split-actions">
+            <a href="/display" target="_blank" class="action-link secondary-action">Preview Display</a>
+            <button type="submit">Continue</button>
+          </form>
+
+        {% else %}
+          <div class="finish-icon">✓</div>
+          <p class="eyebrow">Setup complete</p>
+          <h1>Ready to play</h1>
+          <p class="onboarding-lead">LeftoverAchievements is connected and ready to keep everyone up to date.</p>
+          <dl class="setup-summary finish-summary">
+            <div><dt>RetroAchievements</dt><dd><span class="status-dot"></span> Connected</dd></div>
+            <div><dt>Players tracked</dt><dd>{{ players|length }}</dd></div>
+            <div><dt>Display</dt><dd>Ready</dd></div>
+          </dl>
+          <form method="post" action="/onboarding/finish" class="onboarding-actions finish-actions">
+            <button type="submit" name="destination" value="dashboard">Open Dashboard</button>
+            <button type="submit" name="destination" value="display" class="secondary-button">Open Display</button>
+          </form>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

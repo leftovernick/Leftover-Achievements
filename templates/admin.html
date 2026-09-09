@@ -36,8 +36,9 @@
         <div class="panel-header">
           <h2>RetroAchievements API</h2>
           <span>
-            {% if ra_api_key_source == 'settings' %}Key saved in Settings
-            {% elif ra_api_key_source == 'environment' %}Using legacy .env key
+            {% if ra_connection_status == 'connected' %}Connected
+            {% elif ra_connection_status == 'invalid' %}Connection needs attention
+            {% elif ra_api_key_source %}Connection not yet verified
             {% else %}API key required
             {% endif %}
           </span>
@@ -45,12 +46,12 @@
         <form method="post" action="/admin/api-key" class="api-key-form">
           <label for="ra-api-key">
             <span>Web API key</span>
-            <small>The saved key is stored locally in SQLite and is never displayed again.</small>
+            <small>Your saved key stays private and is never displayed again.</small>
           </label>
           <div class="api-key-entry">
             <input
               id="ra-api-key"
-              type="text"
+              type="password"
               name="api_key"
               placeholder="Paste a new RetroAchievements API key"
               autocomplete="off"
@@ -64,6 +65,22 @@
             <button type="submit">Save API Key</button>
           </div>
         </form>
+      </section>
+
+      <section class="panel onboarding-reset-panel">
+        <div class="panel-header">
+          <h2>Setup Guide</h2>
+          <span>{% if setup_complete %}Completed{% else %}Not completed{% endif %}</span>
+        </div>
+        <div class="onboarding-reset-content">
+          <div>
+            <h3>Run setup again</h3>
+            <p>Restart the guided setup without removing players, history, or your saved API key.</p>
+          </div>
+          <form method="post" action="/admin/reset-onboarding" onsubmit="return confirm('Run the setup guide again? Your players, history, and API key will be kept.');">
+            <button type="submit" class="secondary-button">Reset onboarding</button>
+          </form>
+        </div>
       </section>
 
       <section class="panel display-settings">

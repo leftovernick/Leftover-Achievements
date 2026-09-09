@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements Needs Setup</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=onboarding-1" />
+  </head>
+  <body class="pi-display setup-required-display">
+    <main>
+      <div class="setup-required-brand"><img src="/static/images/leftover-achievements-logo.png" alt="" /><span>LeftoverAchievements</span></div>
+      <section class="setup-required-copy">
+        <p class="display-eyebrow">One quick step</p>
+        <h1>LeftoverAchievements needs setup</h1>
+        <p>Complete setup from another device on this network.</p>
+        <strong class="setup-url">{{ onboarding_url }}</strong>
+        <div class="device-details">
+          {% if hostname %}<span>Device <strong>{{ hostname }}</strong></span>{% endif %}
+          {% if lan_ip %}<span>Network address <strong>{{ lan_ip }}</strong></span>{% endif %}
+        </div>
+      </section>
+      {% if onboarding_qr %}<img class="setup-qr" src="{{ onboarding_qr }}" alt="QR code for {{ onboarding_url }}" />{% endif %}
+    </main>
+  </body>
+</html>
