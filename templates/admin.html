@@ -156,6 +156,18 @@
         </div>
         <form method="post" action="/admin/settings" class="settings-form" enctype="multipart/form-data">
           <div class="display-settings-group">
+            <h3>Display Scale</h3>
+            <p class="field-help">Controls only the dedicated <a href="/display">/display</a> experience.</p>
+            <div class="display-scale-options">
+              {% for value, label in [(1, 'Compact'), (2, 'Large'), (3, 'Extra Large')] %}
+                <label>
+                  <input type="radio" name="display_scale_value" value="{{ value }}" {% if display_scale == value %}checked{% endif %} />
+                  <span><strong>{{ label }}</strong><small>{{ value }}x</small></span>
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="display-settings-group">
             <h3>Display Rotation</h3>
             <div class="duration-slider-stack">
               {% for section, label in [('overall', 'Overall Rankings'), ('weekly', 'Weekly Rankings'), ('current', 'Currently Playing'), ('recent', 'Recent Activity')] %}

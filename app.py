@@ -96,6 +96,7 @@ DEFAULT_DISPLAY_SECTION_SECONDS = {
 }
 MIN_DISPLAY_SECTION_SECONDS = 5
 MAX_DISPLAY_SECTION_SECONDS = 180
+DISPLAY_SCALE_PRESETS = (1, 2, 3)
 STATIC_AUDIO_DIR = str(runtime.mutable_audio_dir)
 CUSTOM_AUDIO_KINDS = ("achievement", "beaten", "mastery")
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg"}
@@ -560,6 +561,25 @@ def set_display_section_seconds(section: str, value: str | None):
         f"display_{section}_seconds",
         str(max(MIN_DISPLAY_SECTION_SECONDS, min(MAX_DISPLAY_SECTION_SECONDS, seconds))),
     )
+
+
+def display_scale() -> int:
+    """Return the persisted /display layout preset, falling back safely to 1x."""
+    try:
+        value = int(db.get_setting("display_scale", "1"))
+    except (TypeError, ValueError):
+        return 1
+    return value if value in DISPLAY_SCALE_PRESETS else 1
+
+
+def set_display_scale(value: str | int | None) -> int:
+    try:
+        scale = int(value) if value is not None else 1
+    except (TypeError, ValueError):
+        scale = 1
+    scale = scale if scale in DISPLAY_SCALE_PRESETS else 1
+    db.set_setting("display_scale", str(scale))
+    return scale
 
 
 def configured_audio_sources() -> dict[str, str]:
@@ -1337,6 +1357,7 @@ async def display(request: Request):
         )
     context = await dashboard_context()
     context.update(local_device_details(request))
+    context["display_scale"] = display_scale()
     return templates.TemplateResponse(
         request=request,
         name="display.html",
@@ -1385,6 +1406,13 @@ async def display_events():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/display/settings/scale")
+async def update_display_scale(display_scale_value: str = Form(...)):
+    scale = set_display_scale(display_scale_value)
+    broadcast_display_event({"type": "display-scale", "scale": scale})
+    return {"display_scale": scale}
 
 
 @app.get("/api/update/status")
@@ -1536,6 +1564,7 @@ async def admin(request: Request, message: str = None):
             "audio_sources": configured_audio_sources(),
             "notification_durations": notification_durations(),
             "display_section_durations": display_section_durations(),
+            "display_scale": display_scale(),
             "ra_api_key_source": ra_api_key_source(),
             "ra_connection_status": ra_connection_status(),
             "setup_complete": db.setup_complete(),
@@ -1619,6 +1648,7 @@ async def update_settings(
     weekly_section_duration: str | None = Form(None),
     current_section_duration: str | None = Form(None),
     recent_section_duration: str | None = Form(None),
+    display_scale_value: str | None = Form(None),
     achievement_audio: UploadFile | None = File(None),
     beaten_audio: UploadFile | None = File(None),
     mastery_audio: UploadFile | None = File(None),
@@ -1631,6 +1661,8 @@ async def update_settings(
     set_display_section_seconds("weekly", weekly_section_duration)
     set_display_section_seconds("current", current_section_duration)
     set_display_section_seconds("recent", recent_section_duration)
+    if display_scale_value is not None:
+        set_display_scale(display_scale_value)
     messages = ["Settings saved."]
     for kind, upload in (
         ("achievement", achievement_audio),

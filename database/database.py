@@ -215,6 +215,13 @@ def init_db():
     cur.execute(
         """
         INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+        VALUES ('display_scale', '1', ?)
+        """,
+        (datetime.now(timezone.utc).isoformat(),),
+    )
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO app_settings (key, value, updated_at)
         VALUES ('setup_complete', '0', ?)
         """,
         (datetime.now(timezone.utc).isoformat(),),

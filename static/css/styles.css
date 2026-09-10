@@ -429,6 +429,23 @@ table {
   border-top: 1px solid var(--border);
 }
 .display-settings-group h3 { margin: 0; font-size: 0.95rem; }
+.display-settings-group .field-help { margin: -3px 0 0; }
+.display-scale-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.display-scale-options label { position: relative; cursor: pointer; }
+.display-scale-options input { position: absolute; opacity: 0; pointer-events: none; }
+.display-scale-options span {
+  display: flex;
+  min-height: 58px;
+  padding: 9px 12px;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #252525;
+}
+.display-scale-options small { color: var(--muted); }
+.display-scale-options input:checked + span { border-color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent-strong); }
+.display-scale-options input:focus-visible + span { outline: 3px solid var(--points-blue); outline-offset: 2px; }
 .notification-category-grid { display: flex; flex-wrap: wrap; gap: 12px 22px; }
 .display-settings-group-header {
   display: flex;
@@ -694,8 +711,9 @@ input {
 
 /* Defense in depth for the appliance display. The dedicated labwc session also
    supplies a transparent Xcursor, so Chromium cannot leave a pointer onscreen. */
-.pi-display,
 .pi-display * { cursor: none !important; }
+.pi-display,
+.pi-display * { -webkit-tap-highlight-color: transparent; }
 
 .pi-display .display-shell {
   position: relative;
@@ -1220,6 +1238,8 @@ input {
   --display-surface: rgba(38, 38, 38, 0.88);
   --display-surface-soft: rgba(255, 255, 255, 0.055);
   --display-line: rgba(255, 255, 255, 0.09);
+  --display-ranking-row-height: clamp(57px, 13.1vh, 120px);
+  --display-activity-row-height: clamp(55px, 12.2vh, 82px);
   min-height: 100svh;
   color: #f7f4ec;
   background:
@@ -1258,7 +1278,21 @@ input {
   width: 100%;
   border: 0;
   background: rgba(5, 5, 5, 0.78);
+  user-select: none;
+  -webkit-user-select: none;
 }
+
+/* Keep the gesture/click dismissal surface visually inert. */
+.pi-display .display-utility-backdrop:hover,
+.pi-display .display-utility-backdrop:active,
+.pi-display .display-utility-backdrop:focus {
+  outline: 0;
+  background: rgba(5, 5, 5, 0.78);
+  box-shadow: none;
+}
+
+.pi-display::selection,
+.pi-display *::selection { background: transparent; }
 
 .display-utility-card {
   position: absolute;
@@ -1306,7 +1340,8 @@ input {
 
 .display-close-button,
 .display-setting-button,
-.display-speed-control button {
+.display-speed-control button,
+.display-scale-control button {
   min-width: 64px;
   min-height: 48px;
   border: 1px solid rgba(255, 255, 255, 0.13);
@@ -1323,7 +1358,8 @@ input {
 
 .display-close-button:hover,
 .display-setting-button:hover,
-.display-speed-control button:hover {
+.display-speed-control button:hover,
+.display-scale-control button:hover {
   color: #111;
   background: var(--accent-strong);
 }
@@ -1343,7 +1379,8 @@ input {
 
 .display-close-button:focus-visible,
 .display-setting-button:focus-visible,
-.display-speed-control button:focus-visible {
+.display-speed-control button:focus-visible,
+.display-scale-control button:focus-visible {
   outline: 3px solid var(--points-blue);
   outline-offset: 2px;
 }
@@ -1499,6 +1536,32 @@ input {
   border-radius: 14px;
 }
 
+.display-scale-control {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 12px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+}
+
+.display-scale-control legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.display-scale-control > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.display-scale-control button { display: flex; min-width: 0; min-height: 54px; padding: 6px 12px; align-items: center; justify-content: space-between; gap: 8px; }
+.display-scale-control button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.display-scale-control button strong { color: var(--accent-strong); }
+.display-scale-control button.is-selected { border-color: rgba(255, 207, 33, 0.65); color: #111; background: var(--accent-strong); }
+.display-scale-control button.is-selected strong { color: #111; }
+.display-scale-control > small { display: block; min-height: 1.15em; margin-top: 5px; color: var(--muted); text-align: right; }
+
 .display-speed-control legend { padding: 0 4px; }
 .display-speed-control > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .display-speed-control button { min-width: 0; padding: 0 10px; }
@@ -1594,7 +1657,7 @@ input {
 .pi-display .display-list li {
   grid-template-columns: clamp(38px, 6vw, 68px) minmax(0, 1fr) auto auto;
   gap: clamp(8px, 1.8vw, 22px);
-  min-height: clamp(57px, 13.1vh, 94px);
+  min-height: var(--display-ranking-row-height);
   padding: clamp(5px, 1vh, 9px) clamp(10px, 1.8vw, 22px);
   border: 1px solid transparent;
   border-radius: clamp(12px, 2.2vw, 22px);
@@ -1845,7 +1908,7 @@ input {
 .pi-display .display-activity-list article {
   grid-template-columns: clamp(44px, 8vh, 66px) minmax(0, 1fr) minmax(112px, 18vw);
   gap: clamp(9px, 1.7vw, 18px);
-  min-height: clamp(55px, 12.2vh, 82px);
+  min-height: var(--display-activity-row-height);
   padding: clamp(5px, 1vh, 8px) clamp(9px, 1.4vw, 16px);
   border: 0;
   border-radius: clamp(11px, 1.8vw, 18px);
@@ -2066,17 +2129,39 @@ input {
 }
 
 .pi-display .achievement-notification-user {
-  gap: 9px;
-  color: var(--points-blue-soft);
-  font-size: clamp(0.78rem, 1.6vw, 1.12rem);
-  font-weight: 720;
+  width: fit-content;
+  max-width: 100%;
+  gap: clamp(10px, 1.5vw, 15px);
+  color: #f7f4ec;
+  font-size: clamp(1rem, 2vw, 1.4rem);
+  font-weight: 780;
 }
 
 .pi-display .achievement-notification-user img {
-  width: clamp(30px, 5.5vh, 44px);
-  height: clamp(30px, 5.5vh, 44px);
+  width: clamp(40px, 7vh, 56px);
+  height: clamp(40px, 7vh, 56px);
+  flex: 0 0 auto;
   border-radius: 50%;
-  box-shadow: 0 0 0 3px rgba(34, 153, 255, 0.1);
+  object-fit: cover;
+  box-shadow: 0 0 0 3px rgba(34, 153, 255, 0.16);
+}
+
+.pi-display .achievement-notification-user > div { min-width: 0; }
+.pi-display .achievement-notification-user small {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--points-blue-soft);
+  font-size: 0.52em;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.pi-display .achievement-notification-user span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pi-display .achievement-notification-copy h1 {
@@ -2156,15 +2241,22 @@ input {
 
 .pi-display .achievement-notification.is-beaten .achievement-notification-badge,
 .pi-display .achievement-notification.is-mastery .achievement-notification-badge {
-  width: 100%;
+  width: auto;
   max-width: min(37vw, 320px);
-  height: min(48vh, 330px);
-  max-height: none;
+  height: auto;
+  max-height: min(48vh, 330px);
+  aspect-ratio: auto;
+  justify-self: center;
   border-color: rgba(255, 207, 33, 0.7);
   border-radius: clamp(18px, 2.7vw, 28px);
-  object-fit: cover;
+  object-fit: initial;
   background: #101010;
   box-shadow: 0 22px 46px rgba(0, 0, 0, 0.42), 0 0 28px rgba(255, 207, 33, 0.16);
+}
+
+.pi-display .achievement-notification.is-beaten .achievement-notification-main,
+.pi-display .achievement-notification.is-mastery .achievement-notification-main {
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .pi-display .achievement-notification.is-mastery .achievement-notification-shell {
@@ -2223,6 +2315,161 @@ input {
   .pi-display .display-stats { grid-template-columns: 1fr; }
   .pi-display .display-list li { grid-template-columns: 36px minmax(0, 1fr) auto; }
   .pi-display .display-rank-stat-secondary { display: none; }
+}
+
+/* /display size presets --------------------------------------------------
+   These are discrete responsive compositions, not geometric page scaling. */
+.pi-display[data-display-scale="2"] {
+  --display-ranking-row-height: clamp(94px, 21vh, 154px);
+  --display-activity-row-height: clamp(91px, 20vh, 148px);
+}
+
+.pi-display[data-display-scale="3"] {
+  --display-ranking-row-height: clamp(132px, 30vh, 224px);
+  --display-activity-row-height: clamp(126px, 28.5vh, 212px);
+}
+
+.pi-display[data-display-scale="2"] .display-slide,
+.pi-display[data-display-scale="3"] .display-slide {
+  gap: clamp(14px, 3vh, 26px);
+  padding: clamp(20px, 4.8vh, 42px) clamp(26px, 4.6vw, 64px);
+}
+
+.pi-display[data-display-scale="2"] .display-slide-header,
+.pi-display[data-display-scale="3"] .display-slide-header {
+  align-items: flex-end;
+  min-height: clamp(62px, 14vh, 112px);
+}
+
+.pi-display[data-display-scale="2"] .display-slide .display-eyebrow { font-size: clamp(0.78rem, 1.65vw, 1.08rem); }
+.pi-display[data-display-scale="3"] .display-slide .display-eyebrow { font-size: clamp(0.9rem, 2vw, 1.3rem); }
+.pi-display[data-display-scale="2"] .display-slide-header p { font-size: clamp(2.3rem, 5.9vw, 4.8rem); }
+.pi-display[data-display-scale="3"] .display-slide-header p { font-size: clamp(2.8rem, 7.2vw, 5.8rem); }
+.pi-display[data-display-scale="2"] .display-header-note { font-size: clamp(0.82rem, 1.75vw, 1.2rem); white-space: normal; text-align: right; }
+.pi-display[data-display-scale="3"] .display-header-note { max-width: 34%; font-size: clamp(0.92rem, 2vw, 1.38rem); white-space: normal; text-align: right; }
+
+.pi-display[data-display-scale="2"] .display-ranking-list,
+.pi-display[data-display-scale="2"] .display-activity-list { gap: clamp(9px, 1.8vh, 16px); }
+.pi-display[data-display-scale="3"] .display-ranking-list,
+.pi-display[data-display-scale="3"] .display-activity-list { gap: clamp(12px, 2.2vh, 20px); }
+
+.pi-display[data-display-scale="2"] .display-list li {
+  grid-template-columns: clamp(52px, 7vw, 84px) minmax(0, 1fr) auto auto;
+  gap: clamp(12px, 2vw, 26px);
+  padding: clamp(10px, 1.8vh, 16px) clamp(14px, 2.2vw, 28px);
+  font-size: clamp(1.35rem, 3vw, 2.25rem);
+  min-height: var(--display-ranking-row-height);
+}
+
+.pi-display[data-display-scale="3"] .display-list li {
+  grid-template-columns: clamp(62px, 8vw, 98px) minmax(0, 1fr) auto;
+  gap: clamp(14px, 2.4vw, 30px);
+  padding: clamp(13px, 2.2vh, 20px) clamp(16px, 2.6vw, 34px);
+  font-size: clamp(1.7rem, 3.8vw, 2.9rem);
+  min-height: var(--display-ranking-row-height);
+}
+
+.pi-display[data-display-scale="2"] .display-ranked-user img { width: clamp(58px, 12vh, 86px); height: clamp(58px, 12vh, 86px); }
+.pi-display[data-display-scale="3"] .display-ranked-user img { width: clamp(76px, 17vh, 116px); height: clamp(76px, 17vh, 116px); }
+.pi-display[data-display-scale="3"] .display-rank-stat-secondary { display: none; }
+
+.pi-display[data-display-scale="2"] .display-activity-list article {
+  grid-template-columns: clamp(68px, 14vh, 100px) minmax(0, 1fr) minmax(130px, 20vw);
+  gap: clamp(14px, 2.2vw, 28px);
+  padding: clamp(9px, 1.6vh, 15px) clamp(13px, 2vw, 24px);
+  min-height: var(--display-activity-row-height);
+}
+
+.pi-display[data-display-scale="3"] .display-activity-list article {
+  grid-template-columns: clamp(88px, 19vh, 126px) minmax(0, 1fr) auto;
+  gap: clamp(16px, 2.6vw, 32px);
+  padding: clamp(12px, 2vh, 18px) clamp(16px, 2.4vw, 30px);
+  min-height: var(--display-activity-row-height);
+}
+
+.pi-display[data-display-scale="2"] .display-activity-list img { width: clamp(68px, 14vh, 100px); height: clamp(68px, 14vh, 100px); }
+.pi-display[data-display-scale="3"] .display-activity-list img { width: clamp(88px, 19vh, 126px); height: clamp(88px, 19vh, 126px); }
+.pi-display[data-display-scale="2"] .display-activity-list .display-activity-title { font-size: clamp(1.3rem, 2.8vw, 2rem); white-space: normal; -webkit-line-clamp: 2; }
+.pi-display[data-display-scale="3"] .display-activity-list .display-activity-title { display: -webkit-box; font-size: clamp(1.65rem, 3.5vw, 2.6rem); white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.pi-display[data-display-scale="2"] .display-activity-copy strong { font-size: clamp(0.88rem, 1.7vw, 1.2rem); }
+.pi-display[data-display-scale="3"] .display-activity-copy strong { font-size: clamp(1rem, 2vw, 1.45rem); }
+.pi-display[data-display-scale="2"] .display-activity-stats strong,
+.pi-display[data-display-scale="2"] .display-activity-stats span,
+.pi-display[data-display-scale="2"] .display-activity-stats time { font-size: clamp(0.82rem, 1.55vw, 1.1rem); }
+.pi-display[data-display-scale="3"] .display-activity-stats strong,
+.pi-display[data-display-scale="3"] .display-activity-stats time { font-size: clamp(0.95rem, 1.9vw, 1.35rem); }
+.pi-display[data-display-scale="3"] .display-activity-stats .display-rp-points { display: none; }
+
+.pi-display[data-display-scale="2"] .display-player { grid-template-columns: minmax(300px, 46%) minmax(0, 1fr); }
+.pi-display[data-display-scale="3"] .display-player { grid-template-columns: minmax(270px, 42%) minmax(0, 1fr); gap: clamp(24px, 4.5vw, 58px); }
+.pi-display[data-display-scale="2"] .display-user-row { font-size: clamp(1.12rem, 2.25vw, 1.58rem); }
+.pi-display[data-display-scale="3"] .display-user-row { font-size: clamp(1.28rem, 2.7vw, 1.9rem); }
+.pi-display[data-display-scale="2"] .display-user-row .avatar { width: clamp(42px, 8vh, 58px); height: clamp(42px, 8vh, 58px); }
+.pi-display[data-display-scale="3"] .display-user-row .avatar { width: clamp(50px, 10vh, 70px); height: clamp(50px, 10vh, 70px); }
+.pi-display[data-display-scale="2"] .display-player h1 { font-size: clamp(2.5rem, 6.3vw, 5.2rem); }
+.pi-display[data-display-scale="3"] .display-player h1 { font-size: clamp(3rem, 7.4vw, 6.2rem); }
+.pi-display[data-display-scale="2"] .display-rich-presence { font-size: clamp(1rem, 2vw, 1.4rem); }
+.pi-display[data-display-scale="3"] .display-rich-presence { margin-bottom: clamp(8px, 1.5vh, 14px); font-size: clamp(1.1rem, 2.3vw, 1.62rem); -webkit-line-clamp: 1; }
+.pi-display[data-display-scale="2"] .display-progress-heading strong { font-size: clamp(2rem, 4.2vw, 3.4rem); }
+.pi-display[data-display-scale="3"] .display-progress-heading strong { font-size: clamp(2.4rem, 5vw, 4rem); }
+.pi-display[data-display-scale="2"] .display-progress-heading span { font-size: clamp(0.84rem, 1.55vw, 1.08rem); white-space: normal; text-align: right; }
+.pi-display[data-display-scale="3"] .display-progress-heading span { font-size: clamp(0.94rem, 1.8vw, 1.24rem); white-space: normal; text-align: right; }
+.pi-display[data-display-scale="2"] .display-progress-track { height: clamp(10px, 2vh, 15px); }
+.pi-display[data-display-scale="3"] .display-progress-track { height: clamp(13px, 2.5vh, 19px); }
+.pi-display[data-display-scale="2"] .display-stats small { font-size: clamp(0.72rem, 1.35vw, 0.94rem); }
+.pi-display[data-display-scale="2"] .display-stats strong { font-size: clamp(1.05rem, 2.1vw, 1.48rem); }
+.pi-display[data-display-scale="3"] .display-stats { grid-template-columns: 1fr; }
+.pi-display[data-display-scale="3"] .display-stats > span:last-child { display: none; }
+.pi-display[data-display-scale="3"] .display-stats small { font-size: clamp(0.82rem, 1.6vw, 1.08rem); }
+.pi-display[data-display-scale="3"] .display-stats strong { font-size: clamp(1.25rem, 2.6vw, 1.8rem); }
+
+.pi-display[data-display-scale="2"] .display-update-indicator { width: 50px; height: 50px; }
+.pi-display[data-display-scale="3"] .display-update-indicator { width: 56px; height: 56px; }
+
+/* Interrupt layouts retain artwork while promoting their core message. */
+.pi-display[data-display-scale="2"] .achievement-notification-heading span { font-size: clamp(2.2rem, 5.2vw, 4.3rem); }
+.pi-display[data-display-scale="3"] .achievement-notification-heading span { font-size: clamp(2.7rem, 6.2vw, 5rem); }
+.pi-display[data-display-scale="2"] .achievement-notification.is-mastery .achievement-notification-heading span { font-size: clamp(2.5rem, 6vw, 5rem); }
+.pi-display[data-display-scale="3"] .achievement-notification.is-mastery .achievement-notification-heading span { font-size: clamp(3rem, 7vw, 5.8rem); }
+.pi-display[data-display-scale="2"] .achievement-notification-main { grid-template-columns: minmax(180px, 34vh) minmax(0, 1fr); }
+.pi-display[data-display-scale="3"] .achievement-notification-main { grid-template-columns: minmax(190px, 37vh) minmax(0, 1fr); }
+.pi-display[data-display-scale="2"] .achievement-notification-badge { width: min(34vh, 280px); height: min(34vh, 280px); }
+.pi-display[data-display-scale="3"] .achievement-notification-badge { width: min(37vh, 320px); height: min(37vh, 320px); }
+.pi-display[data-display-scale="2"] .achievement-notification-user { font-size: clamp(1.3rem, 2.6vw, 1.8rem); }
+.pi-display[data-display-scale="3"] .achievement-notification-user { font-size: clamp(1.55rem, 3.1vw, 2.2rem); }
+.pi-display[data-display-scale="2"] .achievement-notification-user img { width: clamp(50px, 9vh, 68px); height: clamp(50px, 9vh, 68px); }
+.pi-display[data-display-scale="3"] .achievement-notification-user img { width: clamp(58px, 11vh, 78px); height: clamp(58px, 11vh, 78px); }
+.pi-display[data-display-scale="2"] .achievement-notification-copy h1 { font-size: clamp(2.5rem, 6.2vw, 5.2rem); }
+.pi-display[data-display-scale="3"] .achievement-notification-copy h1 { font-size: clamp(3rem, 7.2vw, 6rem); }
+.pi-display[data-display-scale="2"] .achievement-notification-copy p { font-size: clamp(1rem, 2.1vw, 1.48rem); }
+.pi-display[data-display-scale="3"] .achievement-notification-copy p { font-size: clamp(1.12rem, 2.4vw, 1.68rem); }
+.pi-display[data-display-scale="2"] .achievement-notification-meta { font-size: clamp(0.95rem, 1.9vw, 1.34rem); }
+.pi-display[data-display-scale="3"] .achievement-notification-meta { font-size: clamp(1.08rem, 2.2vw, 1.55rem); }
+
+@media (max-width: 900px), (max-height: 600px) {
+  .pi-display[data-display-scale="2"] .display-rank-stat-secondary { display: none; }
+  .pi-display[data-display-scale="2"] .display-player { grid-template-columns: minmax(250px, 42%) minmax(0, 1fr); }
+  .pi-display[data-display-scale="3"] .display-header-note { display: none; }
+  .pi-display[data-display-scale="3"] .display-activity-copy strong em { display: none; }
+  .pi-display[data-display-scale="3"] .achievement-notification-copy p { -webkit-line-clamp: 1; }
+  .pi-display[data-display-scale="3"] .achievement-notification-meta em { display: none; }
+}
+
+@media (max-width: 800px) and (orientation: landscape) {
+  .pi-display[data-display-scale="2"] .display-slide,
+  .pi-display[data-display-scale="3"] .display-slide { padding: 18px 24px; }
+  .pi-display[data-display-scale="2"] .display-slide-header { min-height: 62px; }
+  .pi-display[data-display-scale="3"] .display-slide-header { min-height: 72px; }
+  .pi-display[data-display-scale="2"] .display-slide-header p { font-size: 2.35rem; }
+  .pi-display[data-display-scale="3"] .display-slide-header p { font-size: 2.9rem; }
+  .pi-display[data-display-scale="2"] .display-player { grid-template-columns: minmax(270px, 43%) minmax(0, 1fr); }
+  .pi-display[data-display-scale="3"] .display-player { grid-template-columns: minmax(255px, 39%) minmax(0, 1fr); }
+  .pi-display[data-display-scale="3"] .achievement-notification { padding: 14px 20px; }
+  .pi-display[data-display-scale="3"] .achievement-notification-shell { padding: 14px 20px; }
+}
+
+@media (max-width: 620px) {
+  .display-scale-options { grid-template-columns: 1fr; }
 }
 
 /* First-run setup --------------------------------------------------------- */

@@ -50,6 +50,7 @@
   const updateOverlay = document.querySelector('[data-update-overlay]');
   const updateOverlayTitle = document.querySelector('[data-update-overlay-title]');
   const updateOverlayDetail = document.querySelector('[data-update-overlay-detail]');
+  const scaleStatus = document.querySelector('[data-scale-status]');
   const audioEnabled = root.dataset.audioEnabled === 'true';
   const autoReloadEnabled = root.dataset.autoReload === 'true';
   let customAudioSources = {};
@@ -94,6 +95,7 @@
   let audioMuted = false;
   let rotationSpeed = 'normal';
   let updateRunning = false;
+  let displayScale = ['1', '2', '3'].includes(root.dataset.displayScale) ? root.dataset.displayScale : '1';
 
   dashboardQr?.addEventListener('error', () => {
     dashboardQr.hidden = true;
@@ -273,6 +275,29 @@
     };
 
     scrollAnimationFrameId = window.requestAnimationFrame(animate);
+  };
+
+  const restartActiveListScroll = () => {
+    if (scrollAnimationFrameId !== null) {
+      window.cancelAnimationFrame(scrollAnimationFrameId);
+      scrollAnimationFrameId = null;
+    }
+    scrollCycleElapsed = 0;
+    const activeSlide = slides[currentIndex];
+    const list = activeSlide?.querySelector('.display-ranking-list, .display-activity-list');
+    if (list) list.style.transform = 'translate3d(0, 0, 0)';
+    if (activeSlide && !rotationPaused) startLeaderboardScroll(activeSlide);
+  };
+
+  const applyDisplayScale = (scale) => {
+    const nextScale = String(scale);
+    if (!['1', '2', '3'].includes(nextScale)) return false;
+    displayScale = nextScale;
+    root.dataset.displayScale = nextScale;
+    document.body.dataset.displayScale = nextScale;
+    updateQuickSettings();
+    window.requestAnimationFrame(restartActiveListScroll);
+    return true;
   };
 
   const setCarouselPosition = (position, animate = true) => {
@@ -470,6 +495,13 @@
     events.addEventListener('achievement', enqueueEvent);
     events.addEventListener('beaten', enqueueEvent);
     events.addEventListener('mastery', enqueueEvent);
+    events.addEventListener('display-scale', (message) => {
+      try {
+        applyDisplayScale(JSON.parse(message.data).scale);
+      } catch (error) {
+        console.info('Could not apply display scale', error);
+      }
+    });
     events.addEventListener('display-refresh', () => window.location.reload());
   };
 
@@ -486,6 +518,11 @@
     if (rotationState) rotationState.textContent = pauseReasons.has('manual') ? 'Paused' : 'Rotating';
     document.querySelectorAll('[data-speed]').forEach((button) => {
       const selected = button.dataset.speed === rotationSpeed;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    document.querySelectorAll('[data-scale]').forEach((button) => {
+      const selected = button.dataset.scale === displayScale;
       button.classList.toggle('is-selected', selected);
       button.setAttribute('aria-pressed', String(selected));
     });
@@ -695,6 +732,32 @@
       activeDuration = slideDuration();
       remainingDuration = activeDuration;
       updateQuickSettings();
+    });
+  });
+
+  document.querySelectorAll('[data-scale]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const previousScale = displayScale;
+      const selectedScale = button.dataset.scale;
+      if (!applyDisplayScale(selectedScale) || selectedScale === previousScale) return;
+
+      const scaleButtons = Array.from(document.querySelectorAll('[data-scale]'));
+      scaleButtons.forEach((scaleButton) => { scaleButton.disabled = true; });
+      if (scaleStatus) scaleStatus.textContent = 'Saving…';
+      try {
+        const body = new URLSearchParams({ display_scale_value: selectedScale });
+        const response = await fetch('/display/settings/scale', { method: 'POST', body });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
+        applyDisplayScale(payload.display_scale);
+        if (scaleStatus) scaleStatus.textContent = 'Saved';
+      } catch (error) {
+        applyDisplayScale(previousScale);
+        if (scaleStatus) scaleStatus.textContent = 'Could not save';
+        console.info('Could not save display scale', error);
+      } finally {
+        scaleButtons.forEach((scaleButton) => { scaleButton.disabled = false; });
+      }
     });
   });
 

@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Display</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=release-updates-1" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=display-scale-7" />
   </head>
-  <body class="pi-display">
-    <main class="display-shell" data-display-rotation data-auto-reload="{{ 'true' if display_auto_reload else 'false' }}" data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
+  <body class="pi-display" data-display-scale="{{ display_scale }}">
+    <main class="display-shell" data-display-rotation data-display-scale="{{ display_scale }}" data-auto-reload="{{ 'true' if display_auto_reload else 'false' }}" data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
       <div class="display-carousel-track" data-carousel-track>
       <section class="display-slide display-section is-active" data-slide="overall" data-duration="{{ display_section_durations.overall * 1000 }}">
         <div class="display-slide-header">
@@ -123,7 +123,7 @@
     </button>
 
     <section class="display-utility-layer display-dashboard-panel" data-dashboard-panel aria-hidden="true" aria-labelledby="dashboard-panel-title">
-      <button class="display-utility-backdrop" type="button" data-close-panel aria-label="Close dashboard connection panel"></button>
+      <div class="display-utility-backdrop" data-close-panel aria-hidden="true"></div>
       <div class="display-utility-card" role="dialog" aria-modal="true">
         <div class="display-utility-heading">
           <div><span class="display-eyebrow">Connect another device</span><h2 id="dashboard-panel-title">Dashboard Connection</h2></div>
@@ -145,7 +145,7 @@
     </section>
 
     <section class="display-utility-layer display-settings-panel" data-settings-panel aria-hidden="true" aria-labelledby="settings-panel-title">
-      <button class="display-utility-backdrop" type="button" data-close-panel aria-label="Close quick settings"></button>
+      <div class="display-utility-backdrop" data-close-panel aria-hidden="true"></div>
       <div class="display-utility-card display-settings-card" role="dialog" aria-modal="true">
         <div class="display-utility-heading">
           <div><span class="display-eyebrow">Display controls</span><h2 id="settings-panel-title">Quick Settings</h2></div>
@@ -161,6 +161,15 @@
               <button type="button" data-speed="normal">Normal</button>
               <button type="button" data-speed="fast">Fast</button>
             </div>
+          </fieldset>
+          <fieldset class="display-scale-control">
+            <legend>Display scale</legend>
+            <div>
+              <button type="button" data-scale="1"><span>Compact</span><strong>1x</strong></button>
+              <button type="button" data-scale="2"><span>Large</span><strong>2x</strong></button>
+              <button type="button" data-scale="3"><span>Extra Large</span><strong>3x</strong></button>
+            </div>
+            <small data-scale-status aria-live="polite"></small>
           </fieldset>
         </div>
         <div class="display-update-control" data-display-update-control>
@@ -194,7 +203,10 @@
           <div class="achievement-notification-copy">
             <div class="achievement-notification-user">
               <img data-achievement-user-avatar alt="" hidden />
-              <span data-achievement-username></span>
+              <div>
+                <small>Player</small>
+                <span data-achievement-username></span>
+              </div>
             </div>
             <h1 data-achievement-title></h1>
             <p data-achievement-description></p>
