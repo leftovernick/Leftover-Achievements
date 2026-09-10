@@ -12,6 +12,8 @@ EnvironmentFile=/home/YOUR_USER/LeftoverAchievements/.env
 ExecStart=/home/YOUR_USER/LeftoverAchievements/scripts/start-backend.sh
 Restart=on-failure
 RestartSec=3
+# Uvicorn normally exits well before this; retain a systemd-level safety net.
+TimeoutStopSec=12s
 
 [Install]
 WantedBy=multi-user.target

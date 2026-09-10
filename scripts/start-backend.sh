@@ -4,9 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 VENV_DIR="$PROJECT_ROOT/.venv"
-UVICORN="$VENV_DIR/bin/uvicorn"
+PYTHON="$VENV_DIR/bin/python"
 
-if [[ ! -x "$UVICORN" ]]; then
+if [[ ! -x "$PYTHON" ]]; then
   echo "Error: Python virtual environment is missing or incomplete: $VENV_DIR" >&2
   echo "Run $PROJECT_ROOT/scripts/install-pi.sh first." >&2
   exit 1
@@ -16,4 +16,6 @@ cd "$PROJECT_ROOT"
 # Activating keeps manually launched and systemd-launched environments identical.
 source "$VENV_DIR/bin/activate"
 
-exec "$UVICORN" app:app --host 0.0.0.0 --port 8000
+# The programmatic server signals long-lived SSE streams before Uvicorn starts
+# waiting for connections and enforces an eight-second graceful-shutdown ceiling.
+exec "$PYTHON" launcher.py

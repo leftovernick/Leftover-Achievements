@@ -340,6 +340,14 @@ sudo systemctl restart leftover-achievements
 journalctl -u leftover-achievements
 ```
 
+The production launcher signals active `/display/events` streams before Uvicorn
+begins its graceful connection wait. SSE queue waits are cancellable, and Chromium's
+native `EventSource` reconnects automatically after the replacement backend is
+listening. Uvicorn has an eight-second graceful-shutdown ceiling; the service
+template's `TimeoutStopSec=12s` remains a last-resort systemd safety net rather than
+the normal shutdown mechanism. An existing local `TimeoutStopSec=10s` override is
+also safe to retain.
+
 ### Troubleshooting and recovery
 
 To temporarily boot to the normal desktop without launching Chromium, create the

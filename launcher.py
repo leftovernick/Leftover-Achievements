@@ -10,6 +10,19 @@ import uvicorn
 from runtime import AlreadyRunningError, detect_lan_ip, local_port_in_use, runtime
 
 
+GRACEFUL_SHUTDOWN_SECONDS = 8
+
+
+class LeftoverAchievementsServer(uvicorn.Server):
+    async def shutdown(self, sockets=None) -> None:
+        # Uvicorn waits for persistent HTTP connections before it sends the
+        # lifespan shutdown event. Wake SSE streams first to avoid that cycle.
+        from app import begin_application_shutdown
+
+        begin_application_shutdown()
+        await super().shutdown(sockets=sockets)
+
+
 def configure_logging() -> logging.Logger:
     runtime.ensure_runtime_directories()
     runtime.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -25,6 +38,12 @@ def configure_logging() -> logging.Logger:
     root_logger.setLevel(logging.INFO)
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
+    if runtime.is_pi_appliance:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        root_logger.addHandler(console_handler)
     return logging.getLogger("leftover-achievements.launcher")
 
 
@@ -44,8 +63,9 @@ def create_backend_server() -> uvicorn.Server:
         port=runtime.port,
         reload=False,
         log_config=None,
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
-    return uvicorn.Server(config)
+    return LeftoverAchievementsServer(config)
 
 
 def main() -> int:

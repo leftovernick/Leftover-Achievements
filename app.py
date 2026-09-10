@@ -77,6 +77,8 @@ user_snapshot_refresh_task = None
 recent_activity_refresh_task = None
 achievement_poll_task = None
 display_event_queues = set()
+display_shutdown_event = asyncio.Event()
+SSE_HEARTBEAT_SECONDS = 15
 POLL_CYCLE_SECONDS = 60
 MIN_ACHIEVEMENT_POLL_LOOKBACK_MINUTES = 60
 DEFAULT_NOTIFICATION_SECONDS = {
@@ -991,6 +993,16 @@ async def process_game_awards_for_user(username: str):
         await publish_display_event(serialize_mastery_event(mastery, profile))
 
 
+def broadcast_display_event(event: dict) -> None:
+    for queue in tuple(display_event_queues):
+        queue.put_nowait(event)
+
+
+def request_display_refresh(reason: str = "settings") -> None:
+    """Tell connected displays to reload configuration from the backend."""
+    broadcast_display_event({"type": "display-refresh", "reason": reason})
+
+
 async def publish_display_event(event: dict):
     try:
         await macos_notification_service.notify_event(event)
@@ -998,8 +1010,43 @@ async def publish_display_event(event: dict):
         logger.exception("macOS notification handling failed; continuing display delivery.")
 
     event = {**event, "audio_sources": configured_audio_sources()}
-    for queue in display_event_queues:
-        queue.put_nowait(event)
+    broadcast_display_event(event)
+
+
+def begin_application_shutdown() -> None:
+    """Wake persistent response streams before Uvicorn waits for them to close."""
+    display_shutdown_event.set()
+
+
+async def display_event_stream(queue: asyncio.Queue):
+    """Yield display events until cancelled or application shutdown begins."""
+    queue_wait = asyncio.create_task(queue.get())
+    shutdown_wait = asyncio.create_task(display_shutdown_event.wait())
+    try:
+        while True:
+            done, _pending = await asyncio.wait(
+                (queue_wait, shutdown_wait),
+                timeout=SSE_HEARTBEAT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if shutdown_wait in done:
+                return
+            if queue_wait in done:
+                event = queue_wait.result()
+                event_type = event.get("type", "achievement")
+                yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+                queue_wait = asyncio.create_task(queue.get())
+            else:
+                yield ": keep-alive\n\n"
+    except asyncio.CancelledError:
+        # StreamingResponse cancels its iterator when the client disconnects.
+        # Cancellation must reach Uvicorn so the connection task can finish.
+        raise
+    finally:
+        for task in (queue_wait, shutdown_wait):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(queue_wait, shutdown_wait, return_exceptions=True)
 
 
 def parse_iso_datetime(value: str | None) -> datetime | None:
@@ -1311,26 +1358,28 @@ async def display_dashboard_qr(request: Request):
 
 
 @app.get("/display/events")
-async def display_events(request: Request):
+async def display_events():
     queue = asyncio.Queue()
-    display_event_queues.add(queue)
 
     async def event_stream():
+        display_event_queues.add(queue)
         try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15)
-                except asyncio.TimeoutError:
-                    yield ": keep-alive\n\n"
-                    continue
-                event_type = event.get("type", "achievement")
-                yield f"event: {event_type}\ndata: {json.dumps(event)}\n\n"
+            async for payload in display_event_stream(queue):
+                yield payload
+        except asyncio.CancelledError:
+            raise
         finally:
             display_event_queues.discard(queue)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/update/status")
@@ -1365,6 +1414,7 @@ async def install_application_update(request: Request):
 @app.on_event("startup")
 async def start_background_polling():
     global achievement_poll_task
+    display_shutdown_event.clear()
     application_updater.start()
     if not db.setup_complete():
         return
@@ -1376,6 +1426,7 @@ async def start_background_polling():
 
 @app.on_event("shutdown")
 async def stop_update_polling():
+    begin_application_shutdown()
     await application_updater.stop()
     background_tasks = [
         weekly_refresh_task,
@@ -1584,6 +1635,7 @@ async def update_settings(
         message = await save_custom_audio(kind, upload)
         if message:
             messages.append(message)
+    request_display_refresh()
     return admin_redirect(" ".join(messages))
 
 

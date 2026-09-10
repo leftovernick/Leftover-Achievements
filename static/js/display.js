@@ -470,6 +470,7 @@
     events.addEventListener('achievement', enqueueEvent);
     events.addEventListener('beaten', enqueueEvent);
     events.addEventListener('mastery', enqueueEvent);
+    events.addEventListener('display-refresh', () => window.location.reload());
   };
 
   const storePreference = (key, value) => {
