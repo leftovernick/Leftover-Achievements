@@ -67,14 +67,12 @@ fi
 
 if [[ -r /proc/device-tree/model ]] && grep -aq "Raspberry Pi" /proc/device-tree/model; then
   echo
-  echo "Configuring safe black/quiet appliance boot ..."
-  sudo "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" enable
+  echo "Raspberry Pi boot configuration left unchanged."
   echo
   echo "Configuring the dedicated LeftoverAchievements labwc session ..."
   sudo "$PROJECT_ROOT/scripts/configure-pi-appliance-session.sh" enable "$INSTALL_USER" "$PROJECT_ROOT"
   echo
   echo "Verifying Raspberry Pi appliance configuration ..."
-  sudo "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" status || true
   sudo "$PROJECT_ROOT/scripts/configure-pi-appliance-session.sh" status "$INSTALL_USER" "$PROJECT_ROOT" || true
 fi
 echo
@@ -82,4 +80,4 @@ echo "Next steps:"
 echo "  1. Add your RA_API_KEY to $PROJECT_ROOT/.env"
 echo "  2. Install and enable deploy/leftover-achievements.service as documented in README.md"
 echo "  3. Install the narrow update sudoers rule documented in README.md"
-echo "  4. Reboot the Raspberry Pi (required after boot/session configuration)"
+echo "  4. Reboot the Raspberry Pi (required after session configuration)"

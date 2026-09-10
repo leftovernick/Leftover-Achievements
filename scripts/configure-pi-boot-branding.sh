@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Recovery-only helper for releases that previously changed Raspberry Pi boot
+# files. Normal installs and updates must never call this script.
 CONFIG_BEGIN="# BEGIN LeftoverAchievements appliance boot"
 CONFIG_END="# END LeftoverAchievements appliance boot"
 LEGACY_CONFIG_BEGIN="# BEGIN LeftoverAchievements boot branding"
 LEGACY_CONFIG_END="# END LeftoverAchievements boot branding"
-ACTION="${1:-enable}"
+ACTION="${1:-status}"
+TEST_BOOT_DIRECTORY="${LEFTOVER_TEST_BOOT_DIRECTORY:-}"
 
 detect_boot_files() {
-  if [[ -f /boot/firmware/config.txt && -f /boot/firmware/cmdline.txt ]]; then
+  if [[ -n "$TEST_BOOT_DIRECTORY" ]]; then
+    # Allows the recovery transform to be exercised without touching /boot.
+    # Root is deliberately prohibited from using this test-only override.
+    [[ "$(id -u)" -ne 0 && "$TEST_BOOT_DIRECTORY" == /* ]] || {
+      echo "Error: the test boot directory is only available to a non-root test process." >&2
+      exit 2
+    }
+    BOOT_CONFIG="$TEST_BOOT_DIRECTORY/config.txt"
+    CMDLINE_FILE="$TEST_BOOT_DIRECTORY/cmdline.txt"
+  elif [[ -f /boot/firmware/config.txt && -f /boot/firmware/cmdline.txt ]]; then
     BOOT_CONFIG=/boot/firmware/config.txt
     CMDLINE_FILE=/boot/firmware/cmdline.txt
   elif [[ -f /boot/config.txt && -f /boot/cmdline.txt ]]; then
@@ -21,25 +33,27 @@ detect_boot_files() {
 }
 detect_boot_files
 
-usage() { echo "Usage: sudo $0 [enable|disable|status]"; }
+usage() {
+  echo "Usage: sudo $0 restore-default"
+  echo "       sudo $0 status"
+}
 
-require_pi() {
-  if [[ ! -r /proc/device-tree/model ]] || ! grep -aq "Raspberry Pi" /proc/device-tree/model; then
-    echo "Error: appliance boot can only be configured on Raspberry Pi hardware." >&2
-    exit 1
+require_boot_files() {
+  if [[ -z "$TEST_BOOT_DIRECTORY" ]]; then
+    [[ "$(id -u)" -eq 0 ]] || {
+      echo "Error: boot recovery must be run with sudo." >&2
+      exit 1
+    }
+    if [[ ! -r /proc/device-tree/model ]] || ! grep -aq "Raspberry Pi" /proc/device-tree/model; then
+      echo "Error: boot recovery is only supported on Raspberry Pi hardware." >&2
+      exit 1
+    fi
   fi
-  if [[ -z "$BOOT_CONFIG" || -z "$CMDLINE_FILE" ]]; then
+  if [[ -z "$BOOT_CONFIG" || -z "$CMDLINE_FILE" || ! -f "$BOOT_CONFIG" || ! -f "$CMDLINE_FILE" ]]; then
     echo "Error: a matching Raspberry Pi config.txt/cmdline.txt pair was not found." >&2
     echo "Checked /boot/firmware (current OS) and /boot (legacy OS)." >&2
     exit 1
   fi
-}
-
-require_root() {
-  [[ "$(id -u)" -eq 0 ]] || {
-    echo "Error: this command changes boot files and must be run with sudo." >&2
-    exit 1
-  }
 }
 
 remove_managed_config_blocks() {
@@ -52,111 +66,96 @@ remove_managed_config_blocks() {
     ' "$1" > "$2"
 }
 
-write_appliance_cmdline() {
-  local output token
-  output=""
-  for token in $(tr '\r\n' ' ' < "$CMDLINE_FILE"); do
-    case "$token" in
-      console=tty1|quiet|splash|loglevel=*|logo.nologo|fullscreen_logo=*|fullscreen_logo_name=*|vt.global_cursor_default=*|systemd.show_status=*|rd.systemd.show_status=*) ;;
-      *) output+=" $token" ;;
-    esac
+has_exact_token() {
+  local file="$1" wanted="$2" token
+  for token in $(tr '\r\n' ' ' < "$file"); do
+    [[ "$token" == "$wanted" ]] && return 0
   done
-  output="${output# }"
-  output+=" quiet loglevel=3 logo.nologo vt.global_cursor_default=0"
-  output+=" systemd.show_status=false rd.systemd.show_status=false"
-  printf '%s\n' "$output" | install -m 0644 /dev/stdin "$CMDLINE_FILE"
+  return 1
 }
 
-enable_appliance_boot() {
-  require_root
-  local filtered_config new_config
-  filtered_config="$(mktemp)"
-  new_config="$(mktemp)"
-  remove_managed_config_blocks "$BOOT_CONFIG" "$filtered_config"
-  {
-    cat "$filtered_config"
-    echo
-    echo "$CONFIG_BEGIN"
-    echo "# Suppress the firmware rainbow screen. No userspace/initramfs splash is used."
-    echo "[all]"
-    echo "disable_splash=1"
-    echo "$CONFIG_END"
-  } > "$new_config"
+is_known_la_token() {
+  case "$1" in
+    fullscreen_logo=*|fullscreen_logo_name=*|loglevel=3|logo.nologo|vt.global_cursor_default=0|systemd.show_status=false|rd.systemd.show_status=false) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
-  [[ -e "$BOOT_CONFIG.leftover-achievements.bak" ]] || cp -a "$BOOT_CONFIG" "$BOOT_CONFIG.leftover-achievements.bak"
-  [[ -e "$CMDLINE_FILE.leftover-achievements.bak" ]] || cp -a "$CMDLINE_FILE" "$CMDLINE_FILE.leftover-achievements.bak"
-  install -m 0644 "$new_config" "$BOOT_CONFIG"
-  rm -f "$filtered_config" "$new_config"
-  write_appliance_cmdline
-  sync
+restore_cmdline() {
+  local source="$1" backup="$1.leftover-achievements.bak" output="" token temporary
 
-  echo "Boot config: $BOOT_CONFIG"
-  echo "Kernel command line: $CMDLINE_FILE"
-  echo "Safe black/quiet appliance boot enabled; no initramfs splash was configured."
-  if [[ -e /etc/initramfs-tools/hooks/splash-screen-hook.sh || -e /lib/firmware/logo.tga ]]; then
-    echo "Notice: files from an older early-splash installation remain but are inactive; fullscreen_logo parameters were removed."
+  for token in $(tr '\r\n' ' ' < "$source"); do
+    if is_known_la_token "$token"; then
+      # Preserve a matching token if the one-time pre-install backup proves it
+      # existed before LeftoverAchievements managed this file.
+      if [[ -f "$backup" ]] && has_exact_token "$backup" "$token"; then
+        output+=" $token"
+      fi
+    elif [[ "$token" == quiet && -f "$backup" ]] && ! has_exact_token "$backup" quiet; then
+      # The reliability-first black-boot release added quiet on some systems.
+      :
+    else
+      output+=" $token"
+    fi
+  done
+
+  # Re-add standard tokens that an older LeftoverAchievements installer removed,
+  # but only when its own pre-install backup proves they were originally present.
+  if [[ -f "$backup" ]]; then
+    for token in console=tty1 quiet splash; do
+      if has_exact_token "$backup" "$token" && [[ " $output " != *" $token "* ]]; then
+        output+=" $token"
+      fi
+    done
   fi
-  echo "Reboot to apply the boot changes."
+
+  temporary="$(mktemp)"
+  printf '%s\n' "${output# }" > "$temporary"
+  install -m 0644 "$temporary" "$source"
+  rm -f "$temporary"
 }
 
-disable_appliance_boot() {
-  require_root
-  local filtered_config output token
+restore_default() {
+  local filtered_config
   filtered_config="$(mktemp)"
+  trap 'rm -f "${filtered_config:-}"' EXIT
   remove_managed_config_blocks "$BOOT_CONFIG" "$filtered_config"
   install -m 0644 "$filtered_config" "$BOOT_CONFIG"
-  rm -f "$filtered_config"
+  restore_cmdline "$CMDLINE_FILE"
+  [[ -n "$TEST_BOOT_DIRECTORY" ]] || sync
 
-  output=""
-  for token in $(tr '\r\n' ' ' < "$CMDLINE_FILE"); do
-    case "$token" in
-      logo.nologo|fullscreen_logo=*|fullscreen_logo_name=*|vt.global_cursor_default=*|systemd.show_status=*|rd.systemd.show_status=*|loglevel=3) ;;
-      *) output+=" $token" ;;
-    esac
-  done
-  output="${output# }"
-  [[ " $output " == *" console=tty1 "* ]] || output+=" console=tty1"
-  [[ " $output " == *" quiet "* ]] || output+=" quiet"
-  printf '%s\n' "$output" | install -m 0644 /dev/stdin "$CMDLINE_FILE"
-  echo "LeftoverAchievements appliance boot suppression disabled. Reboot to apply it."
+  echo "Removed LeftoverAchievements-managed boot settings from:"
+  echo "  $BOOT_CONFIG"
+  echo "  $CMDLINE_FILE"
+  echo "Unrelated configuration and standard initramfs files were left untouched."
+  echo "Reboot to use the restored Raspberry Pi OS boot behavior."
 }
-
-has_cmdline_token() { grep -Eq "(^| )$1( |$)" "$CMDLINE_FILE"; }
 
 show_status() {
-  local failed=0
-  echo "Detected boot config: $BOOT_CONFIG"
-  echo "Detected kernel command line: $CMDLINE_FILE"
-  if grep -Fqx "$CONFIG_BEGIN" "$BOOT_CONFIG" && grep -Eq '^disable_splash=1([[:space:]]|$)' "$BOOT_CONFIG"; then
-    echo "[ok] Firmware rainbow/Raspberry Pi splash suppression is configured."
-  else
-    echo "[warning] Firmware splash suppression is not configured."
-    failed=1
+  local found=0 token
+  if grep -Fqx "$CONFIG_BEGIN" "$BOOT_CONFIG" || grep -Fqx "$LEGACY_CONFIG_BEGIN" "$BOOT_CONFIG"; then
+    echo "[recovery needed] LeftoverAchievements boot block found in $BOOT_CONFIG"
+    found=1
   fi
-  if has_cmdline_token 'quiet' && has_cmdline_token 'loglevel=3' && has_cmdline_token 'logo\.nologo' && ! has_cmdline_token 'console=tty1' && ! has_cmdline_token 'splash'; then
-    echo "[ok] Safe black/quiet boot and system console suppression are active."
-  else
-    echo "[warning] Black/quiet appliance boot parameters are incomplete."
-    failed=1
+  for token in $(tr '\r\n' ' ' < "$CMDLINE_FILE"); do
+    if is_known_la_token "$token"; then
+      echo "[recovery candidate] $token"
+      found=1
+    fi
+  done
+  if (( found == 0 )); then
+    echo "No known LeftoverAchievements early-boot changes were found."
   fi
-  if ! grep -Eq '(^| )fullscreen_logo(_name)?=[^ ]+' "$CMDLINE_FILE"; then
-    echo "[ok] Crash-prone fullscreen/initramfs branding is inactive."
-  else
-    echo "[warning] Legacy fullscreen_logo parameters are still active."
-    failed=1
-  fi
-  if has_cmdline_token 'systemd\.show_status=false' && has_cmdline_token 'rd\.systemd\.show_status=false'; then
-    echo "[ok] systemd boot status output is suppressed."
-  else
-    echo "[warning] systemd status suppression is incomplete."
-    failed=1
-  fi
-  return "$failed"
+  return "$found"
 }
 
+require_boot_files
 case "$ACTION" in
-  enable) require_pi; enable_appliance_boot ;;
-  disable) require_pi; disable_appliance_boot ;;
-  status|verify) require_pi; show_status ;;
+  restore-default|disable) restore_default ;;
+  status|verify) show_status ;;
+  enable)
+    echo "Early-boot customization is no longer supported; Raspberry Pi OS boot configuration is intentionally left unchanged." >&2
+    exit 2
+    ;;
   *) usage >&2; exit 2 ;;
 esac

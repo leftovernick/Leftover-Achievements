@@ -79,6 +79,8 @@ apply_configuration() {
   load_installed_user
   validate_current_release
   refresh_vetted_helper
+  # Early boot is intentionally outside this helper's authority. Updates manage
+  # only the backend service and post-boot graphical appliance session.
   install -d -o "$APP_USER" -g "$(id -gn "$APP_USER")" -m 0750 "$DATA_DIR" "$DATA_DIR/logs" "$DATA_DIR/audio"
   [[ -f "$DATA_DIR/.env" ]] || install -o "$APP_USER" -g "$(id -gn "$APP_USER")" -m 0600 /dev/null "$DATA_DIR/.env"
 

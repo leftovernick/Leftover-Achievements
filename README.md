@@ -192,21 +192,38 @@ the normal Raspberry Pi desktop, panel, file manager, and wallpaper are not star
 
 ### 1. Fresh install from a GitHub Release
 
-For a freshly reimaged Pi, select **Raspberry Pi OS (64-bit) with Desktop**, configure
-the normal user, Wi-Fi/Ethernet, and SSH in Raspberry Pi Imager, then boot once and run
-this command as the normal user:
+In Raspberry Pi Imager, select **Raspberry Pi OS (64-bit) with Desktop** and configure
+the normal user, networking, and SSH. Boot once, confirm networking works, then run
+this single command as the normal user (do not prefix it with `sudo`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leftovernick/Leftover-Achievements/main/scripts/bootstrap-pi.sh | bash
 ```
 
+After successful validation, the bootstrap announces a ten-second countdown and
+reboots the Pi automatically. No second command is required. Press Ctrl+C during that
+delay to leave the completed installation running without rebooting. After the Pi
+returns, open `http://<raspberry-pi-hostname>.local:8000/` from another device to
+finish onboarding.
+
 The bootstrap requires Raspberry Pi OS `aarch64`. It installs prerequisites, queries
 the latest stable GitHub Release, selects only its matching Pi ARM64 asset, validates
 the archive and embedded version, builds a release-specific virtual environment, and
 atomically selects the release. It then configures systemd, the narrow privileged
-migration helper, safe black boot, and the dedicated kiosk session. Git and manual
-configuration-file editing are not required. Do not install
-`rpi-splash-screen-support`.
+migration helper, and the dedicated kiosk session. Raspberry Pi boot configuration
+is deliberately left unchanged. Git and manual configuration-file editing are not
+required.
+
+For development or troubleshooting, suppress the automatic reboot with either form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leftovernick/Leftover-Achievements/main/scripts/bootstrap-pi.sh | LEFTOVER_ACHIEVEMENTS_NO_REBOOT=1 bash
+curl -fsSL https://raw.githubusercontent.com/leftovernick/Leftover-Achievements/main/scripts/bootstrap-pi.sh | bash -s -- --no-reboot
+```
+
+The installer then prints the manual reboot command but still treats the installation
+as successful. Automatic reboot is exclusive to bootstrap and is not used for normal
+updates started from the dashboard.
 
 After installation, open the dashboard from another device on the same network and
 follow the setup guide. Before setup is complete, the Pi display shows the setup URL,
@@ -246,63 +263,51 @@ new keyring or first-run prompt does not interrupt startup. The session supplies
 transparent Xcursor theme, scoped only to the appliance session; `/display` also uses
 `cursor: none` as defense in depth. Touch and pointer gestures continue to work.
 
-### 4. Safe black/quiet boot
+### 4. Reliability-first boot
 
-On Raspberry Pi hardware, the bootstrap detects a matching `config.txt`/`cmdline.txt`
-pair under `/boot/firmware` (current OS) or `/boot` (legacy OS); it never mixes the two
-layouts. It keeps the firmware-level `disable_splash=1`, removes the stock Plymouth
-`splash` token and visible tty1 console, suppresses kernel-logo and systemd-status
-output, and uses `quiet loglevel=3`.
+The default installer does not modify `/boot/config.txt`,
+`/boot/firmware/config.txt`, either `cmdline.txt`, Plymouth, firmware splash settings,
+or initramfs images. It does not install `rpi-splash-screen-support`, add quiet-boot or
+`fullscreen_logo` parameters, or use kernel command-line cursor suppression.
 
-The default path deliberately does **not** install or run
-`rpi-splash-screen-support`, configure `fullscreen_logo`, add a Plymouth theme, copy
-an image into the initramfs, or rebuild the initramfs. Real Pi 4 DSI testing showed
-that an early userspace splash can fail before networking and expose a crash
-backtrace on the framebuffer. There is no reliable generic probe that proves a given
-display/controller/driver combination supports that path, so this project does not
-offer an automatic advanced splash mode. Uncertain hardware always falls back to a
-black display until the graphical session is ready.
+This is intentional. Real Raspberry Pi 4 testing with a DSI touchscreen showed that
+early splash customization could fail before networking and SSH became available,
+and an earlier initramfs/fullscreen-logo approach could expose crash or backtrace
+output on the framebuffer. A normal Raspberry Pi OS boot screen is accepted to keep
+boot, networking, SSH, and recovery reliable. Early branded splash is not a supported
+or recommended option, especially on DSI displays.
 
 The intended handoff is:
 
-1. Firmware starts with its rainbow/logo output suppressed where supported.
-2. The screen remains black while hardware, the kernel, and the compositor initialize.
-3. The dedicated labwc session starts Chromium on the branded local loading screen.
+`Raspberry Pi OS boot visuals` → `LeftoverAchievements loading page` → `/display`
+
+1. Raspberry Pi OS shows its normal boot visuals.
+2. LightDM enters the dedicated LeftoverAchievements labwc session instead of the
+   normal desktop shell.
+3. Chromium opens the dark branded local loading screen.
 4. The loading screen transitions to `/display` when the backend is ready.
 
-The project preserves one-time `.leftover-achievements.bak` copies beside both files.
-Re-running the installer is idempotent. It also removes legacy `fullscreen_logo`
-parameters left by an older release, which deactivates that crash-prone boot path
-without touching or rebuilding the installed initramfs.
-The installer does not mask boot, getty, display-manager, or emergency services.
-SSH and alternate virtual consoles therefore remain available.
-
-Check or reapply appliance boot suppression with:
+Re-running the installer remains idempotent. The appliance session does not mask boot,
+getty, display-manager, or emergency services, so SSH and alternate virtual consoles
+remain available. Check the post-boot appliance configuration with:
 
 ```bash
 cd ~/.local/share/LeftoverAchievements/app/current
-sudo ./scripts/configure-pi-boot-branding.sh status
-sudo ./scripts/configure-pi-boot-branding.sh enable
-sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$HOME/.local/share/LeftoverAchievements/app/current"
+sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$PWD"
 ```
 
-Very early firmware, monitor-link training, and display-driver initialization happen
-before the application can draw. A black interval is therefore expected. DSI displays
-in particular may not support a safe early branded splash and remain black until the
-dedicated graphical session starts. The project deliberately does not patch firmware
-or add an unsupported framebuffer/initramfs workaround.
+### 5. Automatic reboot and verification
 
-### 5. Reboot and verify
-
-```bash
-sudo reboot
-```
+Only after the package, dependencies, migration, systemd service, kiosk session, and
+local `/display` health check succeed does bootstrap flush pending writes and begin
+the ten-second reboot countdown. Any failure exits without rebooting. Ctrl+C cancels
+only the pending reboot and prints the command to use later.
 
 Expected boot sequence:
 
 1. systemd waits for the network-online target, starts FastAPI, and restarts it after
    a crash.
-2. The display remains black through kernel and hardware initialization.
+2. Raspberry Pi OS may show its normal boot screen while hardware and services start.
 3. LightDM logs the configured user directly into the dedicated minimal labwc
    appliance session; the normal Raspberry Pi desktop is not launched.
 4. labwc displays the dark branded background and starts the matching local loading
@@ -356,16 +361,24 @@ B1`. Restore desktop auto-login with the same menu or
 `sudo raspi-config nonint do_boot_behaviour B4`. SSH is unaffected by either mode.
 On an attached keyboard, Ctrl+Alt+F2 also reaches an alternate console.
 
-To disable appliance boot suppression and restore a conventional visible console:
+If an older LeftoverAchievements installation modified early-boot settings, recover
+only the known project-managed changes with:
 
 ```bash
-sudo ./scripts/configure-pi-boot-branding.sh disable
+cd ~/.local/share/LeftoverAchievements/app/current
+sudo ./scripts/configure-pi-boot-branding.sh restore-default
 sudo reboot
 ```
 
-This recovery command removes only the project's marked `config.txt` block and managed
-kernel parameters and restores `console=tty1 quiet`. It does not touch the initramfs,
-disable SSH, or change the normal graphical boot target.
+The helper removes the project's marked `config.txt` blocks and known old kernel
+arguments. When the old installer backup exists, it uses that evidence to preserve
+pre-existing arguments and restore `console=tty1`, `quiet`, or `splash` only when they
+were originally present. It preserves unrelated configuration and does not delete or
+rebuild initramfs files. Files from an older splash-support package may therefore
+remain installed but become inactive once their kernel arguments are removed. Because
+an interrupted or manually altered historical install cannot always be reconstructed
+exactly, reflashing the SD card remains the safest recovery if the Pi still fails
+before networking starts.
 
 ### Application updates
 
@@ -405,13 +418,14 @@ For the currently deployed `~/Leftover-Achievements` Pi, run the same bootstrap 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leftovernick/Leftover-Achievements/main/scripts/bootstrap-pi.sh | bash
-sudo reboot
 ```
 
 It detects `~/Leftover-Achievements` and `~/LeftoverAchievements`, copies `.env`, the
 configured/default SQLite database, and `custom-*` audio only when the destination is
 empty, and migrates an environment-only RA API key into the database. Onboarding,
 tracked users, histories, cached event deduplication, and settings therefore survive.
+After validating the migrated packaged installation, bootstrap uses the same automatic
+reboot countdown as a fresh install.
 The old checkout is not deleted; keep it until the packaged installation has been
 verified, then archive or remove it manually if desired. All later updates use release
 assets and require no Git checkout.
