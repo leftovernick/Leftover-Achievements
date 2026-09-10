@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeftoverAchievements</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      cursor: none;
+      background: #05080d;
+    }
+    body {
+      display: grid;
+      place-items: center;
+      font-family: system-ui, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    img {
+      width: min(42vmin, 400px);
+      height: auto;
+      pointer-events: none;
+      -webkit-user-drag: none;
+    }
+  </style>
+</head>
+<body>
+  <img src="../static/images/leftover-achievements-logo.png" alt="LeftoverAchievements">
+  <script>
+    (() => {
+      const query = new URLSearchParams(window.location.search);
+      const displayUrl = query.get("display") || "http://127.0.0.1:8000/display";
+      const retryMs = Math.max(500, Number(query.get("retry")) || 2000);
+
+      const probe = () => {
+        const image = new Image();
+        image.onload = () => window.location.replace(displayUrl);
+        image.onerror = () => window.setTimeout(probe, retryMs);
+        image.src = new URL("/static/images/favicon.png", displayUrl).href
+          + "?ready=" + Date.now();
+      };
+
+      probe();
+    })();
+  </script>
+</body>
+</html>

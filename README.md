@@ -181,7 +181,7 @@ not run this workflow or produce distributable packages. The workflow uses its
 built-in `GITHUB_TOKEN`; no personal access token or release-note generation is
 involved.
 
-## Raspberry Pi 5 deployment
+## Raspberry Pi 4/5 deployment
 
 Use Raspberry Pi OS 64-bit with Desktop. Current Raspberry Pi OS desktop images use
 Wayland with the labwc window manager and include Chromium. The backend runs as a
@@ -268,12 +268,48 @@ The resulting entry should resemble:
 /home/your-user/LeftoverAchievements/scripts/start-kiosk.sh &
 ```
 
-The kiosk launcher checks `http://127.0.0.1:8000/display` every two seconds until it
-receives a successful response, then launches Chromium with kiosk, no-first-run,
-no-error-dialog, autoplay, and maximized-window flags. It does not require internet
-access to open the local page.
+The kiosk launcher opens Chromium immediately onto a local, dark
+LeftoverAchievements loading screen. That page checks the local backend every two
+seconds and replaces itself with `http://127.0.0.1:8000/display` as soon as it is
+ready. Chromium uses kiosk, basic password-store, no-first-run, no-error-dialog,
+autoplay, and maximized-window flags, so a new keyring or first-run prompt does not
+interrupt startup. Internet access is not required to open the local page.
 
-### 4. Reboot and verify
+### 4. Branded boot splash
+
+On Raspberry Pi hardware, `install-pi.sh` also enables the branded early boot splash.
+It installs Raspberry Pi OS's supported `rpi-splash-screen-support` package when
+needed, suppresses the firmware rainbow screen with `disable_splash=1`, validates
+and installs `deploy/boot/leftover-achievements-splash.tga`, and rebuilds the
+initramfs. The supplied TGA is a dark 1280×720 derivative of the existing project
+logo, not a separate logo design.
+
+The intended handoff is:
+
+1. Firmware starts with its display suppressed where supported.
+2. The kernel draws the centered LeftoverAchievements early splash.
+3. Chromium starts on the matching local loading screen.
+4. The loading screen transitions to `/display` when the backend is ready.
+
+The official helper preserves the original kernel command line as
+`/boot/firmware/cmdline.txt.bak` (or `/boot/cmdline.txt.bak` on older images).
+The installer does not mask boot, getty, display-manager, or emergency services.
+SSH and alternate virtual consoles therefore remain available.
+
+Check or reapply the branding with:
+
+```bash
+sudo ./scripts/configure-pi-boot-branding.sh status
+sudo ./scripts/configure-pi-boot-branding.sh enable
+```
+
+Very early firmware, monitor-link training, and display-driver initialization happen
+before Linux can draw the custom image. A short black frame can therefore remain.
+Some DSI displays whose driver is unavailable in the initramfs may not show the early
+image; they remain dark until the graphical session starts. The project deliberately
+does not patch firmware or add an unsupported framebuffer hack for those frames.
+
+### 5. Reboot and verify
 
 ```bash
 sudo reboot
@@ -283,10 +319,14 @@ Expected boot sequence:
 
 1. systemd waits for the network-online target, starts FastAPI, and restarts it after
    a crash.
-2. Raspberry Pi OS starts the labwc desktop and logs in the configured desktop user.
-3. labwc runs `scripts/start-kiosk.sh`.
-4. The launcher waits for FastAPI and opens Chromium directly to `/display`.
-5. The dashboard remains available to other devices on the LAN.
+2. The branded early splash covers normal kernel startup where the display driver
+   supports it.
+3. Raspberry Pi OS starts the labwc graphical session and logs in the configured
+   desktop user.
+4. labwc runs `scripts/start-kiosk.sh`, which immediately covers the session with
+   the matching local loading screen.
+5. The loading screen opens `/display` when FastAPI is ready.
+6. The dashboard remains available to other devices on the LAN.
 
 A temporary loss of internet connectivity does not prevent Chromium from reaching the
 local FastAPI page. Live RetroAchievements data and remote artwork naturally require
@@ -299,6 +339,41 @@ sudo systemctl status leftover-achievements
 sudo systemctl restart leftover-achievements
 journalctl -u leftover-achievements
 ```
+
+### Troubleshooting and recovery
+
+To temporarily boot to the normal desktop without launching Chromium, create the
+kiosk-disable marker over SSH or from a virtual console, then reboot:
+
+```bash
+mkdir -p ~/.config/leftover-achievements
+touch ~/.config/leftover-achievements/disable-kiosk
+sudo reboot
+```
+
+Remove the marker to restore appliance kiosk startup:
+
+```bash
+rm ~/.config/leftover-achievements/disable-kiosk
+sudo reboot
+```
+
+To boot to a text console, use `sudo raspi-config` and select **System Options →
+Boot / Auto Login → Console**, or run `sudo raspi-config nonint do_boot_behaviour
+B1`. Restore desktop auto-login with the same menu or
+`sudo raspi-config nonint do_boot_behaviour B4`. SSH is unaffected by either mode.
+On an attached keyboard, Ctrl+Alt+F2 also reaches an alternate console.
+
+To disable the custom early splash and restore a conventional quiet console boot:
+
+```bash
+sudo ./scripts/configure-pi-boot-branding.sh disable
+sudo reboot
+```
+
+This recovery command removes only the project's marked `config.txt` block and its
+fullscreen-logo kernel parameters, restores `console=tty1 quiet`, and rebuilds the
+initramfs. It does not disable SSH or change the normal graphical boot target.
 
 ### Application updates
 

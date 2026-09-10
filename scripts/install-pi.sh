@@ -19,6 +19,7 @@ fi
 mkdir -p "$PROJECT_ROOT/database"
 chmod +x "$PROJECT_ROOT/scripts/start-backend.sh" \
   "$PROJECT_ROOT/scripts/start-kiosk.sh" \
+  "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" \
   "$PROJECT_ROOT/scripts/install-pi.sh" \
   "$PROJECT_ROOT/scripts/update-app.sh"
 
@@ -59,6 +60,12 @@ if (( ${#missing_packages[@]} > 0 )); then
   echo "  sudo apt update && sudo apt install -y ${missing_packages[*]}"
 else
   echo "Required system commands (curl and Chromium) are available."
+fi
+
+if [[ -r /proc/device-tree/model ]] && grep -aq "Raspberry Pi" /proc/device-tree/model; then
+  echo
+  echo "Configuring LeftoverAchievements boot branding ..."
+  sudo "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" enable
 fi
 echo
 echo "Next steps:"

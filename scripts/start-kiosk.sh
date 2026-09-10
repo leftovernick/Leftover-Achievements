@@ -2,12 +2,15 @@
 set -euo pipefail
 
 DISPLAY_URL="${LEFTOVER_ACHIEVEMENTS_DISPLAY_URL:-http://127.0.0.1:8000/display}"
-HEALTH_URL="${LEFTOVER_ACHIEVEMENTS_HEALTH_URL:-http://127.0.0.1:8000/display}"
 RETRY_SECONDS="${LEFTOVER_ACHIEVEMENTS_RETRY_SECONDS:-2}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+SPLASH_PAGE="$PROJECT_ROOT/deploy/kiosk-loading.html"
+DISABLE_MARKER="${XDG_CONFIG_HOME:-$HOME/.config}/leftover-achievements/disable-kiosk"
 
-if ! command -v curl >/dev/null 2>&1; then
-  echo "Error: curl is required. Install it with: sudo apt install curl" >&2
-  exit 1
+if [[ -e "$DISABLE_MARKER" ]]; then
+  echo "LeftoverAchievements kiosk is temporarily disabled by $DISABLE_MARKER."
+  exit 0
 fi
 
 if command -v chromium >/dev/null 2>&1; then
@@ -19,18 +22,35 @@ else
   exit 1
 fi
 
-echo "Waiting for the LeftoverAchievements backend at $HEALTH_URL ..."
-until curl --fail --silent --output /dev/null "$HEALTH_URL"; do
-  sleep "$RETRY_SECONDS"
-done
+if [[ ! -f "$SPLASH_PAGE" ]]; then
+  echo "Error: kiosk loading page was not found: $SPLASH_PAGE" >&2
+  exit 1
+fi
 
-echo "Backend is ready; opening $DISPLAY_URL in Chromium kiosk mode."
+PYTHON="${PYTHON:-$PROJECT_ROOT/.venv/bin/python}"
+if [[ ! -x "$PYTHON" ]]; then
+  PYTHON="$(command -v python3 || true)"
+fi
+if [[ -z "$PYTHON" ]]; then
+  echo "Error: Python is required to prepare the kiosk loading URL." >&2
+  exit 1
+fi
+
+SPLASH_URL="$("$PYTHON" -c '
+import pathlib, sys, urllib.parse
+page, display, retry = sys.argv[1:]
+query = urllib.parse.urlencode({"display": display, "retry": str(float(retry) * 1000)})
+print(pathlib.Path(page).resolve().as_uri() + "?" + query)
+' "$SPLASH_PAGE" "$DISPLAY_URL" "$RETRY_SECONDS")"
+
+echo "Opening the LeftoverAchievements kiosk loading screen."
 exec "$CHROMIUM" \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
   --no-first-run \
+  --password-store=basic \
   --disable-session-crashed-bubble \
   --autoplay-policy=no-user-gesture-required \
   --start-maximized \
-  "$DISPLAY_URL"
+  "$SPLASH_URL"
