@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/css/styles.css?v=release-updates-1" />
   </head>
   <body class="pi-display">
-    <main class="display-shell" data-display-rotation data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
+    <main class="display-shell" data-display-rotation data-auto-reload="{{ 'true' if display_auto_reload else 'false' }}" data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
       <div class="display-carousel-track" data-carousel-track>
       <section class="display-slide display-section is-active" data-slide="overall" data-duration="{{ display_section_durations.overall * 1000 }}">
         <div class="display-slide-header">

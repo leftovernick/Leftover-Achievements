@@ -8,3 +8,4 @@ python-multipart>=0.0.9
 qrcode[pil]>=7.4.2
 packaging>=23.0
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-UserNotifications>=10.0; sys_platform == "darwin"

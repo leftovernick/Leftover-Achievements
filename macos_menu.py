@@ -40,11 +40,13 @@ class MenuBarDelegate(NSObject):
         self.backend_error: str | None = None
         self.backend_ready_logged = False
         self.update_request_running = False
+        self.notification_request_running = False
         self.shutting_down = False
         self.shutdown_complete = False
         self.status_item = None
         self.server_status_item = None
         self.update_status_item = None
+        self.notification_status_item = None
         self.view_update_item = None
         self.update_url: str | None = None
 
@@ -70,6 +72,9 @@ class MenuBarDelegate(NSObject):
         )
         self.update_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             15.0, self, "refreshCachedUpdateStatus:", None, True
+        )
+        self.notification_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            15.0, self, "refreshNotificationStatus:", None, True
         )
 
     def _create_status_menu(self):
@@ -100,6 +105,11 @@ class MenuBarDelegate(NSObject):
         menu.addItem_(self._menu_item("Open Dashboard", "openDashboard:"))
         menu.addItem_(self._menu_item("Open Display", "openDisplay:"))
         menu.addItem_(self._menu_item("Copy Dashboard Address", "copyDashboardAddress:"))
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        self.notification_status_item = self._menu_item("Notifications: Checking…", None)
+        self.notification_status_item.setEnabled_(False)
+        menu.addItem_(self.notification_status_item)
         menu.addItem_(NSMenuItem.separatorItem())
         menu.addItem_(self._menu_item("Check for Updates", "checkForUpdates:"))
 
@@ -159,6 +169,7 @@ class MenuBarDelegate(NSObject):
                 self.backend_ready_logged = True
                 self.logger.info("Packaged backend is ready.")
                 self._request_update_state(check_now=False)
+                self._request_notification_status()
             return
         self._set_server_status("Server: Starting…")
 
@@ -169,6 +180,49 @@ class MenuBarDelegate(NSObject):
     def refreshCachedUpdateStatus_(self, _timer):
         if self.server is not None and self.server.started:
             self._request_update_state(check_now=False)
+
+    def refreshNotificationStatus_(self, _timer):
+        if self.server is not None and self.server.started:
+            self._request_notification_status()
+
+    def _request_notification_status(self):
+        if self.notification_request_running:
+            return
+        self.notification_request_running = True
+        threading.Thread(
+            target=self._fetch_notification_status,
+            name="leftover-notification-menu",
+            daemon=True,
+        ).start()
+
+    def _fetch_notification_status(self):
+        request = Request(
+            f"http://127.0.0.1:{runtime.port}/api/macos-notifications/status",
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                payload = json.load(response)
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+            payload = {"authorization": "unavailable", "enabled": True}
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applyNotificationState:", payload, False
+        )
+
+    def applyNotificationState_(self, payload: dict[str, Any]):
+        self.notification_request_running = False
+        authorization = payload.get("authorization")
+        if not payload.get("enabled"):
+            title = "Notifications: Off"
+        elif authorization == "denied":
+            title = "Notifications: Disabled by macOS"
+        elif payload.get("can_deliver"):
+            title = "Notifications: Enabled"
+        elif authorization == "not_determined":
+            title = "Notifications: Permission Required"
+        else:
+            title = "Notifications: Unavailable"
+        self.notification_status_item.setTitle_(title)
 
     def _request_update_state(self, check_now: bool):
         if self.update_request_running:

@@ -109,6 +109,47 @@
         </div>
       </section>
 
+      {% if macos_notification_status.supported %}
+      <section class="panel display-settings">
+        <div class="panel-header">
+          <h2>Notifications</h2>
+          <span>
+            {% if macos_notification_status.authorization == 'denied' %}Disabled by macOS
+            {% elif macos_notification_status.can_deliver %}Enabled
+            {% elif macos_notification_status.authorization == 'not_determined' %}Permission not requested
+            {% else %}Unavailable
+            {% endif %}
+          </span>
+        </div>
+        <form method="post" action="/admin/macos-notifications" class="settings-form">
+          <div class="display-settings-group">
+            <div class="display-settings-group-header">
+              <div>
+                <h3>macOS Notifications</h3>
+                <p class="field-help">Native alerts are separate from display popup audio. Saving with notifications enabled asks macOS for permission when needed.</p>
+              </div>
+              <label class="checkbox-setting">
+                <input type="checkbox" name="enabled" value="1" {% if macos_notification_status.enabled %}checked{% endif %} />
+                <span>Enable macOS Notifications</span>
+              </label>
+            </div>
+            <div class="notification-category-grid">
+              {% for category, label in [('achievement', 'Achievement Unlocked'), ('beaten', 'Game Beaten'), ('mastery', 'Game Mastered'), ('update', 'Update Available')] %}
+                <label class="checkbox-setting">
+                  <input type="checkbox" name="{{ category }}" value="1" {% if macos_notification_status.categories[category] %}checked{% endif %} />
+                  <span>{{ label }}</span>
+                </label>
+              {% endfor %}
+            </div>
+            {% if macos_notification_status.authorization == 'denied' %}
+              <p class="application-update-error">Notifications are denied in macOS. You can allow LeftoverAchievements in System Settings → Notifications.</p>
+            {% endif %}
+          </div>
+          <button type="submit">Save Notification Settings</button>
+        </form>
+      </section>
+      {% endif %}
+
       <section class="panel display-settings">
         <div class="panel-header">
           <h2>Display Settings</h2>

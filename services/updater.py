@@ -23,6 +23,7 @@ from packaging.version import InvalidVersion, Version
 
 logger = logging.getLogger(__name__)
 ReleaseFetcher = Callable[[str], Awaitable[dict[str, Any] | None]]
+StateListener = Callable[[dict[str, Any]], Awaitable[None] | None]
 if TYPE_CHECKING:
     from runtime import RuntimeEnvironment
 
@@ -43,12 +44,14 @@ class ApplicationUpdater:
         repository: str | None = None,
         release_fetcher: ReleaseFetcher | None = None,
         runtime_environment: "RuntimeEnvironment | None" = None,
+        state_listener: StateListener | None = None,
     ):
         self.project_root = project_root.resolve()
         self.runtime = runtime_environment
         self.check_interval_seconds = check_interval_seconds
         self.repository = repository
         self.release_fetcher = release_fetcher or self._fetch_latest_release
+        self.state_listener = state_listener
         self.script_path = self.project_root / "scripts" / "update-app.sh"
         self.log_path = (
             runtime_environment.update_log_path
@@ -338,7 +341,15 @@ class ApplicationUpdater:
                 self._warn_check_failure(str(exc))
             finally:
                 self._state["checking"] = False
-            return dict(self._state)
+            state = dict(self._state)
+            if self.state_listener:
+                try:
+                    result = self.state_listener(state)
+                    if result is not None:
+                        await result
+                except Exception:
+                    logger.exception("Application update state listener failed.")
+            return state
 
     def _warn_check_failure(self, message: str) -> None:
         now = datetime.now(timezone.utc)

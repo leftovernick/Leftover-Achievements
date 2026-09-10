@@ -22,6 +22,7 @@ if not runtime.is_packaged:
     load_dotenv(runtime.resource_path(".env"))
 
 from database import database as db
+from services.macos_notifications import MacOSNotificationService
 from services.retroachievements import RetroAchievements
 from services.updater import ApplicationUpdater, UpdateError
 
@@ -38,9 +39,17 @@ templates = Jinja2Templates(directory=str(runtime.resource_path("templates")))
 db.init_db()
 legacy_environment_api_key = None if runtime.is_packaged else os.getenv("RA_API_KEY")
 ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or legacy_environment_api_key)
+macos_notification_service = MacOSNotificationService(runtime, db)
+
+
+async def notify_about_update(state: dict):
+    await macos_notification_service.notify_update(state)
+
+
 application_updater = ApplicationUpdater(
     runtime.resource_root,
     runtime_environment=runtime,
+    state_listener=notify_about_update,
 )
 RECENT_ACTIVITY_LIMIT = 5
 RECENT_ACTIVITY_FETCH_MINUTES = 43200
@@ -983,8 +992,10 @@ async def process_game_awards_for_user(username: str):
 
 
 async def publish_display_event(event: dict):
-    if not display_event_queues:
-        return
+    try:
+        await macos_notification_service.notify_event(event)
+    except Exception:
+        logger.exception("macOS notification handling failed; continuing display delivery.")
 
     event = {**event, "audio_sources": configured_audio_sources()}
     for queue in display_event_queues:
@@ -1332,6 +1343,11 @@ async def check_for_application_update():
     return await application_updater.check()
 
 
+@app.get("/api/macos-notifications/status")
+async def macos_notification_status():
+    return await macos_notification_service.status()
+
+
 @app.post("/api/update/install", status_code=202)
 async def install_application_update(request: Request):
     origin = request.headers.get("origin")
@@ -1446,6 +1462,7 @@ async def dashboard_context():
         "audio_sources": configured_audio_sources(),
         "display_js_version": static_asset_version(str(runtime.resource_path("static", "js", "display.js"))),
         "display_section_durations": display_section_durations(),
+        "display_auto_reload": runtime.is_pi_appliance,
         "ra_connection_status": ra_connection_status(),
     }
 
@@ -1453,6 +1470,7 @@ async def dashboard_context():
 @app.get("/admin")
 async def admin(request: Request, message: str = None):
     await refresh_ra_connection_if_stale()
+    macos_notification_status = await macos_notification_service.status()
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
@@ -1466,6 +1484,7 @@ async def admin(request: Request, message: str = None):
             "ra_connection_status": ra_connection_status(),
             "setup_complete": db.setup_complete(),
             "update_status": await application_updater.status(),
+            "macos_notification_status": macos_notification_status,
             "update_js_version": static_asset_version(str(runtime.resource_path("static", "js", "update.js"))),
         },
     )
@@ -1566,6 +1585,38 @@ async def update_settings(
         if message:
             messages.append(message)
     return admin_redirect(" ".join(messages))
+
+
+@app.post("/admin/macos-notifications")
+async def update_macos_notification_settings(
+    enabled: str | None = Form(None),
+    achievement: str | None = Form(None),
+    beaten: str | None = Form(None),
+    mastery: str | None = Form(None),
+    update: str | None = Form(None),
+):
+    if not macos_notification_service.supported:
+        raise HTTPException(status_code=404, detail="macOS notifications are unavailable.")
+    macos_notification_service.save_preferences(
+        enabled == "1",
+        {
+            "achievement": achievement == "1",
+            "beaten": beaten == "1",
+            "mastery": mastery == "1",
+            "update": update == "1",
+        },
+    )
+    status = await macos_notification_service.request_authorization()
+    authorization = status["authorization"]
+    if not status["enabled"]:
+        message = "macOS notifications disabled."
+    elif authorization == "denied":
+        message = "Notification preferences saved. macOS has disabled notifications for this app."
+    elif status["can_deliver"]:
+        message = "macOS notification preferences saved."
+    else:
+        message = "Notification preferences saved, but macOS notification permission is unavailable."
+    return admin_redirect(message)
 
 
 @app.post("/admin/test-alert/{alert_type}")

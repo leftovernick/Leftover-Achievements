@@ -199,6 +199,14 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS native_notification_deliveries (
+            dedupe_key TEXT PRIMARY KEY,
+            delivered_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
         INSERT OR IGNORE INTO app_settings (key, value, updated_at)
         VALUES ('audio_enabled', '1', ?)
         """,
@@ -1041,6 +1049,29 @@ def set_setting(key: str, value: str):
                 updated_at = excluded.updated_at
             """,
             (key, value, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def native_notification_delivered(dedupe_key: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM native_notification_deliveries WHERE dedupe_key = ?",
+            (dedupe_key,),
+        )
+        return cur.fetchone() is not None
+
+
+def mark_native_notification_delivered(dedupe_key: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO native_notification_deliveries (dedupe_key, delivered_at)
+            VALUES (?, ?)
+            """,
+            (dedupe_key, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
 

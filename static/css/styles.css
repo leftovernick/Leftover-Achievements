@@ -429,6 +429,7 @@ table {
   border-top: 1px solid var(--border);
 }
 .display-settings-group h3 { margin: 0; font-size: 0.95rem; }
+.notification-category-grid { display: flex; flex-wrap: wrap; gap: 12px 22px; }
 .display-settings-group-header {
   display: flex;
   align-items: center;

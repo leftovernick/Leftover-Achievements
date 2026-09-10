@@ -103,6 +103,15 @@ open a browser automatically; choose **Open Dashboard** or **Open Display** from
 menu. Its status icon uses the system `trophy.fill` symbol as a template image, so no
 separate colored menu-bar asset is required and macOS adapts it for light/dark menus.
 
+Packaged macOS builds can also deliver native Notification Center alerts for
+achievement unlocks, beaten games, mastered games, and available app updates. Open
+**Settings → Notifications**, choose the event categories, and save with **Enable
+macOS Notifications** selected to request the normal macOS permission. The app does
+not ask at launch, a denial does not affect the server or display, and display popup
+audio remains a separate preference. Each RetroAchievements event is notified at
+most once, and each available release version is announced once. Clicking a
+notification opens the local dashboard.
+
 Build on the target operating system; PyInstaller does not cross-compile. Both build
 scripts derive the version from the exact Git tag at HEAD. CI or a test build may
 instead provide `LEFTOVER_BUILD_VERSION=v1.2.0`; end users never edit a version file.
