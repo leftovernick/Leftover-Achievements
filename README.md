@@ -185,8 +185,8 @@ involved.
 
 Use Raspberry Pi OS 64-bit with Desktop. Current Raspberry Pi OS desktop images use
 Wayland with the labwc window manager and include Chromium. The backend runs as a
-systemd service; Chromium starts after desktop login and waits for the local backend
-before opening the display.
+systemd service. Production appliance mode selects a separate minimal labwc session;
+the normal Raspberry Pi desktop, panel, file manager, and wallpaper are not started.
 
 ### 1. Clone and install
 
@@ -201,8 +201,9 @@ cd ~/LeftoverAchievements
 
 The installer creates `.venv`, installs `requirements.txt`, ensures the local database
 directory exists, marks the launch scripts executable, and creates `.env` from
-`.env.example` only when `.env` does not already exist. It reports an `apt` command if
-`curl`, Chromium, or Python venv support is missing.
+`.env.example` only when `.env` does not already exist. On Raspberry Pi hardware it
+also installs and verifies the branded boot configuration and dedicated kiosk session.
+It reports an `apt` command if `curl`, Chromium, or Python venv support is missing.
 
 After installation, open the dashboard from another device on the same network and
 follow the setup guide. Before setup is complete, the Pi display shows the setup URL,
@@ -239,50 +240,36 @@ uses `http://127.0.0.1:8000/display`; another device on the same LAN can open th
 dashboard at `http://<raspberry-pi-ip>:8000/`. This deployment does not add
 authentication, so only expose port 8000 on a trusted network.
 
-### 3. Configure the labwc kiosk autostart
+### 3. Dedicated labwc appliance session
 
-Enable desktop auto-login using Raspberry Pi Imager during OS setup, the desktop
-Control Centre, or `sudo raspi-config` (`System Options` → `Boot / Auto Login` →
-desktop autologin).
-
-The current Raspberry Pi OS labwc user autostart file is documented in the
-[official Raspberry Pi kiosk guide](https://www.raspberrypi.com/tutorials/how-to-use-a-raspberry-pi-in-kiosk-mode/):
-
-```text
-~/.config/labwc/autostart
-```
-
-Create the directory/file if needed, then copy the command from
-`deploy/labwc-autostart` into the existing autostart file. Replace `YOUR_USER` and the
-example project path just as you did for the systemd unit. Do not replace an existing
-autostart file; append the kiosk command to it. For example:
-
-```bash
-mkdir -p ~/.config/labwc
-nano ~/.config/labwc/autostart
-```
-
-The resulting entry should resemble:
-
-```sh
-/home/your-user/LeftoverAchievements/scripts/start-kiosk.sh &
-```
+`install-pi.sh` installs a `leftover-achievements` Wayland session and selects it in a
+small LightDM override. It runs labwc with a private configuration directory under
+`/etc/leftover-achievements/labwc`; its autostart contains the kiosk and optional
+`kanshi`/`swaybg` support only. It does not source the Raspberry Pi desktop labwc
+configuration, so `wf-panel-pi`, PCManFM, desktop icons, and the normal wallpaper are
+not rendered underneath Chromium. A legacy `start-kiosk.sh` line is removed from the
+user desktop autostart after a one-time backup, preventing duplicate browsers.
 
 The kiosk launcher opens Chromium immediately onto a local, dark
 LeftoverAchievements loading screen. That page checks the local backend every two
 seconds and replaces itself with `http://127.0.0.1:8000/display` as soon as it is
 ready. Chromium uses kiosk, basic password-store, no-first-run, no-error-dialog,
-autoplay, and maximized-window flags, so a new keyring or first-run prompt does not
-interrupt startup. Internet access is not required to open the local page.
+autoplay, native Wayland, a dedicated kiosk profile, and maximized-window flags, so a
+new keyring or first-run prompt does not interrupt startup. The session supplies a
+transparent Xcursor theme, scoped only to the appliance session; `/display` also uses
+`cursor: none` as defense in depth. Touch and pointer gestures continue to work.
 
 ### 4. Branded boot splash
 
 On Raspberry Pi hardware, `install-pi.sh` also enables the branded early boot splash.
-It installs Raspberry Pi OS's supported `rpi-splash-screen-support` package when
-needed, suppresses the firmware rainbow screen with `disable_splash=1`, validates
-and installs `deploy/boot/leftover-achievements-splash.tga`, and rebuilds the
-initramfs. The supplied TGA is a dark 1280×720 derivative of the existing project
-logo, not a separate logo design.
+It detects a matching `config.txt`/`cmdline.txt` pair under `/boot/firmware` (current
+OS) or `/boot` (legacy OS); it never mixes the two layouts. It installs Raspberry Pi
+OS's supported `rpi-splash-screen-support` package when needed, suppresses the
+firmware rainbow screen with `disable_splash=1`, disables the stock Plymouth splash
+token and visible tty1, enables low-log-level/status-suppressed boot, validates and installs
+`deploy/boot/leftover-achievements-splash.tga`, and rebuilds the initramfs. The
+supplied TGA is a dark 1280×720 derivative of the existing project logo, not a
+separate logo design.
 
 The intended handoff is:
 
@@ -291,8 +278,13 @@ The intended handoff is:
 3. Chromium starts on the matching local loading screen.
 4. The loading screen transitions to `/display` when the backend is ready.
 
-The official helper preserves the original kernel command line as
-`/boot/firmware/cmdline.txt.bak` (or `/boot/cmdline.txt.bak` on older images).
+The project preserves one-time `.leftover-achievements.bak` copies beside both files.
+The helper is invoked with `--no-cmdline` because its own command-line edit targets
+the modern path; the project then updates the path it actually detected. The literal
+`quiet` token is omitted because the supported helper identifies it as conflicting
+with fullscreen-logo mode; removing tty1 and Plymouth while using `loglevel=3` and
+disabled systemd status still prevents local boot text without silencing recovery
+output on another configured console.
 The installer does not mask boot, getty, display-manager, or emergency services.
 SSH and alternate virtual consoles therefore remain available.
 
@@ -301,6 +293,7 @@ Check or reapply the branding with:
 ```bash
 sudo ./scripts/configure-pi-boot-branding.sh status
 sudo ./scripts/configure-pi-boot-branding.sh enable
+sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$(pwd)"
 ```
 
 Very early firmware, monitor-link training, and display-driver initialization happen
@@ -321,10 +314,10 @@ Expected boot sequence:
    a crash.
 2. The branded early splash covers normal kernel startup where the display driver
    supports it.
-3. Raspberry Pi OS starts the labwc graphical session and logs in the configured
-   desktop user.
-4. labwc runs `scripts/start-kiosk.sh`, which immediately covers the session with
-   the matching local loading screen.
+3. LightDM logs the configured user directly into the dedicated minimal labwc
+   appliance session; the normal Raspberry Pi desktop is not launched.
+4. labwc displays the dark branded background and starts the matching local loading
+   screen without a panel, wallpaper, terminal, or browser chrome.
 5. The loading screen opens `/display` when FastAPI is ready.
 6. The dashboard remains available to other devices on the LAN.
 
@@ -350,19 +343,19 @@ also safe to retain.
 
 ### Troubleshooting and recovery
 
-To temporarily boot to the normal desktop without launching Chromium, create the
-kiosk-disable marker over SSH or from a virtual console, then reboot:
+To temporarily return to the normal OS desktop, disable only the appliance-session
+selection over SSH or from an alternate console, then reboot:
 
 ```bash
-mkdir -p ~/.config/leftover-achievements
-touch ~/.config/leftover-achievements/disable-kiosk
+sudo ./scripts/configure-pi-appliance-session.sh disable
 sudo reboot
 ```
 
-Remove the marker to restore appliance kiosk startup:
+Re-enable and verify appliance mode when troubleshooting is complete:
 
 ```bash
-rm ~/.config/leftover-achievements/disable-kiosk
+sudo ./scripts/configure-pi-appliance-session.sh enable "$(id -un)" "$(pwd)"
+sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$(pwd)"
 sudo reboot
 ```
 
@@ -399,6 +392,14 @@ mode, updates `.venv` from `requirements.txt`, and restarts only the backend ser
 Detached HEAD is the expected production state after the first release update and
 does not prevent future updates. Ignored files such as `.env`, the SQLite database,
 and updater logs are not modified.
+
+For an already-installed Pi upgrading from the former desktop-autostart design, the
+release update preserves `.env`, onboarding state, the SQLite database, tracked users,
+and history. Because selecting a system login session and changing boot files requires
+root access that the deliberately narrow updater sudo rule does not grant, run
+`./scripts/install-pi.sh` once after installing this release, then reboot. Later normal
+application updates do not require this migration step. The installer keeps existing
+configuration and data and prints the detected boot paths and verification results.
 
 A new Pi initially cloned from `main` is shown as a **Development build** until HEAD
 exactly matches a stable version tag. If a stable release exists, that unversioned

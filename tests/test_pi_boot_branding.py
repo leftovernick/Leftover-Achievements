@@ -44,7 +44,12 @@ class RaspberryPiBootBrandingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("rpi-splash-screen-support", script)
-        self.assertIn('configure-splash "$SPLASH_IMAGE"', script)
+        self.assertIn('configure-splash "$SPLASH_IMAGE" --no-cmdline', script)
+        self.assertIn("/boot/firmware/cmdline.txt", script)
+        self.assertIn("/boot/cmdline.txt", script)
+        self.assertIn("console=tty1|quiet|splash", script)
+        self.assertIn('output+=" loglevel=3', script)
+        self.assertIn("! has_cmdline_token 'quiet'", script)
         self.assertIn('echo "[all]"', script)
         self.assertIn('echo "disable_splash=1"', script)
         self.assertIn("update-initramfs -k all -u", script)
@@ -55,6 +60,8 @@ class RaspberryPiBootBrandingTests(unittest.TestCase):
         for relative_path in (
             "scripts/configure-pi-boot-branding.sh",
             "scripts/start-kiosk.sh",
+            "scripts/run-kiosk-session.sh",
+            "scripts/configure-pi-appliance-session.sh",
             "scripts/install-pi.sh",
         ):
             with self.subTest(script=relative_path):
@@ -70,11 +77,20 @@ class RaspberryPiBootBrandingTests(unittest.TestCase):
         )
 
         self.assertIn("--password-store=basic", launcher)
+        self.assertIn("--ozone-platform=wayland", launcher)
+        self.assertIn("--user-data-dir=", launcher)
         self.assertIn("kiosk-loading.html", launcher)
         self.assertIn("disable-kiosk", launcher)
         self.assertIn("leftover-achievements-logo.png", loading_page)
         self.assertIn('window.location.replace(displayUrl)', loading_page)
         self.assertIn('new URL("/static/images/favicon.png", displayUrl)', loading_page)
+
+    def test_installer_enables_and_verifies_appliance_mode(self):
+        installer = (PROJECT_ROOT / "scripts/install-pi.sh").read_text(encoding="utf-8")
+        self.assertIn('configure-pi-boot-branding.sh" enable', installer)
+        self.assertIn('configure-pi-appliance-session.sh" enable', installer)
+        self.assertIn('configure-pi-boot-branding.sh" status', installer)
+        self.assertIn('configure-pi-appliance-session.sh" status', installer)
 
 
 if __name__ == "__main__":

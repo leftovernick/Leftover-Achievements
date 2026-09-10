@@ -692,6 +692,11 @@ input {
   background: #101010;
 }
 
+/* Defense in depth for the appliance display. The dedicated labwc session also
+   supplies a transparent Xcursor, so Chromium cannot leave a pointer onscreen. */
+.pi-display,
+.pi-display * { cursor: none !important; }
+
 .pi-display .display-shell {
   position: relative;
   width: 100vw;

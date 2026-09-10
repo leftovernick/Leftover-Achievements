@@ -1,4 +1,0 @@
-# LeftoverAchievements Chromium kiosk launcher
-# Replace YOUR_USER and the project path before adding this line to
-# ~/.config/labwc/autostart on the Raspberry Pi.
-/home/YOUR_USER/LeftoverAchievements/scripts/start-kiosk.sh &

@@ -8,25 +8,30 @@ CONFIG_BEGIN="# BEGIN LeftoverAchievements boot branding"
 CONFIG_END="# END LeftoverAchievements boot branding"
 ACTION="${1:-enable}"
 
-if [[ -f /boot/firmware/config.txt ]]; then
-  BOOT_CONFIG=/boot/firmware/config.txt
-elif [[ -f /boot/config.txt ]]; then
-  BOOT_CONFIG=/boot/config.txt
-else
-  BOOT_CONFIG=""
-fi
-
-usage() {
-  echo "Usage: sudo $0 [enable|disable|status]"
+detect_boot_files() {
+  if [[ -f /boot/firmware/config.txt && -f /boot/firmware/cmdline.txt ]]; then
+    BOOT_CONFIG=/boot/firmware/config.txt
+    CMDLINE_FILE=/boot/firmware/cmdline.txt
+  elif [[ -f /boot/config.txt && -f /boot/cmdline.txt ]]; then
+    BOOT_CONFIG=/boot/config.txt
+    CMDLINE_FILE=/boot/cmdline.txt
+  else
+    BOOT_CONFIG=""
+    CMDLINE_FILE=""
+  fi
 }
+detect_boot_files
+
+usage() { echo "Usage: sudo $0 [enable|disable|status]"; }
 
 require_pi() {
   if [[ ! -r /proc/device-tree/model ]] || ! grep -aq "Raspberry Pi" /proc/device-tree/model; then
     echo "Error: boot branding can only be configured on Raspberry Pi hardware." >&2
     exit 1
   fi
-  if [[ -z "$BOOT_CONFIG" ]]; then
-    echo "Error: Raspberry Pi boot config was not found in /boot/firmware or /boot." >&2
+  if [[ -z "$BOOT_CONFIG" || -z "$CMDLINE_FILE" ]]; then
+    echo "Error: a matching Raspberry Pi config.txt/cmdline.txt pair was not found." >&2
+    echo "Checked /boot/firmware (current OS) and /boot (legacy OS)." >&2
     exit 1
   fi
 }
@@ -39,21 +44,31 @@ require_root() {
 }
 
 remove_config_block() {
-  local source_file="$1"
-  local destination_file="$2"
   awk -v begin="$CONFIG_BEGIN" -v end="$CONFIG_END" '
     $0 == begin { managed = 1; next }
     $0 == end { managed = 0; next }
     !managed { print }
-  ' "$source_file" > "$destination_file"
+  ' "$1" > "$2"
+}
+
+write_appliance_cmdline() {
+  local output token
+  output=""
+  for token in $(tr '\r\n' ' ' < "$CMDLINE_FILE"); do
+    case "$token" in
+      console=tty1|quiet|splash|loglevel=*|fullscreen_logo=*|fullscreen_logo_name=*|vt.global_cursor_default=*|systemd.show_status=*|rd.systemd.show_status=*) ;;
+      *) output+=" $token" ;;
+    esac
+  done
+  output="${output# }"
+  output+=" loglevel=3 fullscreen_logo=1 fullscreen_logo_name=logo.tga"
+  output+=" vt.global_cursor_default=0 systemd.show_status=false rd.systemd.show_status=false"
+  printf '%s\n' "$output" | install -m 0644 /dev/stdin "$CMDLINE_FILE"
 }
 
 enable_branding() {
   require_root
-  if [[ ! -f "$SPLASH_IMAGE" ]]; then
-    echo "Error: branded splash asset is missing: $SPLASH_IMAGE" >&2
-    exit 1
-  fi
+  [[ -f "$SPLASH_IMAGE" ]] || { echo "Error: branded splash asset is missing: $SPLASH_IMAGE" >&2; exit 1; }
 
   if ! command -v configure-splash >/dev/null 2>&1; then
     echo "Installing Raspberry Pi's supported splash-screen helper ..."
@@ -74,75 +89,83 @@ enable_branding() {
     echo "disable_splash=1"
     echo "$CONFIG_END"
   } > "$new_config"
+  [[ -e "$BOOT_CONFIG.leftover-achievements.bak" ]] || cp -a "$BOOT_CONFIG" "$BOOT_CONFIG.leftover-achievements.bak"
+  [[ -e "$CMDLINE_FILE.leftover-achievements.bak" ]] || cp -a "$CMDLINE_FILE" "$CMDLINE_FILE.leftover-achievements.bak"
   install -m 0644 "$new_config" "$BOOT_CONFIG"
   rm -f "$filtered_config" "$new_config"
 
-  # This official Raspberry Pi OS tool validates the TGA, updates cmdline.txt,
-  # embeds it in the initramfs, and preserves its own cmdline.txt.bak backup.
-  configure-splash "$SPLASH_IMAGE"
+  # configure-splash otherwise hard-codes /boot/firmware/cmdline.txt. Let the
+  # supported helper validate/install the image and initramfs hook, then update
+  # the detected matching cmdline file ourselves.
+  configure-splash "$SPLASH_IMAGE" --no-cmdline
+  write_appliance_cmdline
+  sync
+  echo "Boot config: $BOOT_CONFIG"
+  echo "Kernel command line: $CMDLINE_FILE"
   echo "LeftoverAchievements boot branding enabled. Reboot to apply it."
 }
 
 disable_branding() {
   require_root
-  local filtered_config
+  local filtered_config output token
   filtered_config="$(mktemp)"
   remove_config_block "$BOOT_CONFIG" "$filtered_config"
   install -m 0644 "$filtered_config" "$BOOT_CONFIG"
   rm -f "$filtered_config"
 
-  local cmdline_file
-  cmdline_file="$(dirname "$BOOT_CONFIG")/cmdline.txt"
-  if [[ -f "$cmdline_file" ]]; then
-    local cmdline
-    cmdline="$(tr '\r\n' ' ' < "$cmdline_file")"
-    cmdline="$(printf '%s' "$cmdline" | sed -E \
-      -e 's/(^| )fullscreen_logo=[^ ]*//g' \
-      -e 's/(^| )fullscreen_logo_name=[^ ]*//g' \
-      -e 's/(^| )vt\.global_cursor_default=[^ ]*//g' \
-      -e 's/  +/ /g' -e 's/^ //; s/ $//')"
-    [[ " $cmdline " == *" console=tty1 "* ]] || cmdline="$cmdline console=tty1"
-    [[ " $cmdline " == *" quiet "* ]] || cmdline="$cmdline quiet"
-    printf '%s\n' "$cmdline" | install -m 0644 /dev/stdin "$cmdline_file"
-  fi
+  output=""
+  for token in $(tr '\r\n' ' ' < "$CMDLINE_FILE"); do
+    case "$token" in
+      fullscreen_logo=*|fullscreen_logo_name=*|vt.global_cursor_default=*|systemd.show_status=*|rd.systemd.show_status=*|loglevel=3) ;;
+      *) output+=" $token" ;;
+    esac
+  done
+  output="${output# }"
+  [[ " $output " == *" console=tty1 "* ]] || output+=" console=tty1"
+  [[ " $output " == *" quiet "* ]] || output+=" quiet"
+  printf '%s\n' "$output" | install -m 0644 /dev/stdin "$CMDLINE_FILE"
 
   rm -f /etc/initramfs-tools/hooks/splash-screen-hook.sh
-  if command -v update-initramfs >/dev/null 2>&1; then
-    update-initramfs -k all -u
-  fi
+  command -v update-initramfs >/dev/null 2>&1 && update-initramfs -k all -u
   echo "LeftoverAchievements boot branding disabled. Reboot to apply it."
 }
 
+has_cmdline_token() { grep -Eq "(^| )$1( |$)" "$CMDLINE_FILE"; }
+
 show_status() {
-  if grep -Fqx "$CONFIG_BEGIN" "$BOOT_CONFIG"; then
-    echo "LeftoverAchievements firmware splash suppression: enabled"
+  local failed=0
+  echo "Detected boot config: $BOOT_CONFIG"
+  echo "Detected kernel command line: $CMDLINE_FILE"
+  if grep -Fqx "$CONFIG_BEGIN" "$BOOT_CONFIG" && grep -Eq '^disable_splash=1([[:space:]]|$)' "$BOOT_CONFIG"; then
+    echo "[ok] Firmware/Raspberry Pi splash suppression is configured."
   else
-    echo "LeftoverAchievements firmware splash suppression: disabled"
+    echo "[warning] Firmware splash suppression is not configured."
+    failed=1
   fi
-  local cmdline_file
-  cmdline_file="$(dirname "$BOOT_CONFIG")/cmdline.txt"
-  if [[ -f "$cmdline_file" ]] && grep -Eq '(^| )fullscreen_logo=1( |$)' "$cmdline_file"; then
-    echo "LeftoverAchievements early boot splash: enabled"
+  if has_cmdline_token 'fullscreen_logo=1' && has_cmdline_token 'fullscreen_logo_name=logo\.tga'; then
+    echo "[ok] LeftoverAchievements early boot logo is configured."
   else
-    echo "LeftoverAchievements early boot splash: disabled"
+    echo "[warning] LeftoverAchievements early boot logo is not configured."
+    failed=1
   fi
+  if has_cmdline_token 'loglevel=3' && ! has_cmdline_token 'quiet' && ! has_cmdline_token 'console=tty1' && ! has_cmdline_token 'splash'; then
+    echo "[ok] Visual boot output and the stock Plymouth splash are suppressed."
+  else
+    echo "[warning] Boot output is not configured for the supported fullscreen-logo mode."
+    failed=1
+  fi
+  if [[ -f /lib/firmware/logo.tga && -f /etc/initramfs-tools/hooks/splash-screen-hook.sh ]]; then
+    echo "[ok] Branded logo and initramfs hook are installed."
+  else
+    echo "[warning] Branded initramfs splash files are missing."
+    failed=1
+  fi
+  return "$failed"
 }
 
 case "$ACTION" in
-  enable)
-    require_pi
-    enable_branding
-    ;;
-  disable)
-    require_pi
-    disable_branding
-    ;;
-  status)
-    require_pi
-    show_status
-    ;;
-  *)
-    usage >&2
-    exit 2
-    ;;
+  enable) require_pi; enable_branding ;;
+  disable) require_pi; disable_branding ;;
+  status|verify) require_pi; show_status ;;
+  *) usage >&2; exit 2 ;;
 esac

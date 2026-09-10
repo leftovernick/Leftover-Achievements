@@ -9,6 +9,7 @@ fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 VENV_DIR="$PROJECT_ROOT/.venv"
+INSTALL_USER="${SUDO_USER:-$(id -un)}"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Error: python3 is required. Install it with:" >&2
@@ -19,7 +20,9 @@ fi
 mkdir -p "$PROJECT_ROOT/database"
 chmod +x "$PROJECT_ROOT/scripts/start-backend.sh" \
   "$PROJECT_ROOT/scripts/start-kiosk.sh" \
+  "$PROJECT_ROOT/scripts/run-kiosk-session.sh" \
   "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" \
+  "$PROJECT_ROOT/scripts/configure-pi-appliance-session.sh" \
   "$PROJECT_ROOT/scripts/install-pi.sh" \
   "$PROJECT_ROOT/scripts/update-app.sh"
 
@@ -66,11 +69,17 @@ if [[ -r /proc/device-tree/model ]] && grep -aq "Raspberry Pi" /proc/device-tree
   echo
   echo "Configuring LeftoverAchievements boot branding ..."
   sudo "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" enable
+  echo
+  echo "Configuring the dedicated LeftoverAchievements labwc session ..."
+  sudo "$PROJECT_ROOT/scripts/configure-pi-appliance-session.sh" enable "$INSTALL_USER" "$PROJECT_ROOT"
+  echo
+  echo "Verifying Raspberry Pi appliance configuration ..."
+  sudo "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" status || true
+  sudo "$PROJECT_ROOT/scripts/configure-pi-appliance-session.sh" status "$INSTALL_USER" "$PROJECT_ROOT" || true
 fi
 echo
 echo "Next steps:"
 echo "  1. Add your RA_API_KEY to $PROJECT_ROOT/.env"
 echo "  2. Install and enable deploy/leftover-achievements.service as documented in README.md"
 echo "  3. Install the narrow update sudoers rule documented in README.md"
-echo "  4. Add deploy/labwc-autostart to your labwc desktop autostart configuration"
-echo "  5. Reboot the Raspberry Pi"
+echo "  4. Reboot the Raspberry Pi (required after boot/session configuration)"
