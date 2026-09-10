@@ -10,7 +10,9 @@ SERVICE_FILE=/etc/systemd/system/leftover-achievements.service
 SUDOERS_FILE=/etc/sudoers.d/leftover-achievements-update
 HELPER_PATH=/usr/local/sbin/leftover-achievements-migrate
 LABWC_CONFIG=/etc/leftover-achievements/labwc
+LIGHTDM_MAIN=/etc/lightdm/lightdm.conf
 LIGHTDM_CONFIG=/etc/lightdm/lightdm.conf.d/90-leftover-achievements.conf
+LIGHTDM_SESSION_STATE=$STATE_DIR/lightdm-main-session.state
 SESSION_FILE=/usr/share/wayland-sessions/leftover-achievements.desktop
 SESSION_LAUNCHER=/usr/local/libexec/leftover-achievements-session
 
@@ -75,6 +77,64 @@ refresh_vetted_helper() {
   rm -f "$candidate"
 }
 
+active_lightdm_setting() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 0
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      value = $0
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]*#.*/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      found = value
+    }
+    END { if (found != "") print found }
+  ' "$file"
+}
+
+replace_active_lightdm_setting() {
+  local file="$1" key="$2" value="$3" temporary
+  [[ -f "$file" ]] || return 0
+  temporary="$(mktemp)"
+  awk -v key="$key" -v replacement="$value" '
+    {
+      line = $0
+      if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
+        equals = index(line, "=")
+        rest = substr(line, equals + 1)
+        match(rest, /^[[:space:]]*/)
+        prefix = substr(line, 1, equals) substr(rest, 1, RLENGTH)
+        rest = substr(rest, RLENGTH + 1)
+        hash = index(rest, "#")
+        suffix = hash ? " " substr(rest, hash) : ""
+        print prefix replacement suffix
+        next
+      }
+      print line
+    }
+  ' "$file" > "$temporary"
+  install -m 0644 "$temporary" "$file"
+  rm -f "$temporary"
+}
+
+patch_lightdm_main_sessions() {
+  [[ -f "$LIGHTDM_MAIN" ]] || return 0
+  if [[ ! -f "$LIGHTDM_SESSION_STATE" ]]; then
+    local previous_user_session previous_autologin_session state_tmp
+    previous_user_session="$(active_lightdm_setting "$LIGHTDM_MAIN" user-session)"
+    previous_autologin_session="$(active_lightdm_setting "$LIGHTDM_MAIN" autologin-session)"
+    state_tmp="$(mktemp)"
+    {
+      printf 'user-session=%s\n' "$previous_user_session"
+      printf 'autologin-session=%s\n' "$previous_autologin_session"
+    } > "$state_tmp"
+    install -m 0600 "$state_tmp" "$LIGHTDM_SESSION_STATE"
+    rm -f "$state_tmp"
+  fi
+  replace_active_lightdm_setting "$LIGHTDM_MAIN" user-session leftover-achievements
+  replace_active_lightdm_setting "$LIGHTDM_MAIN" autologin-session leftover-achievements
+}
+
 apply_configuration() {
   load_installed_user
   validate_current_release
@@ -125,6 +185,13 @@ EOF
     echo "The supported labwc Wayland session is unavailable." >&2; exit 2;
   }
   install -d -m 0755 "$LABWC_CONFIG" /etc/lightdm/lightdm.conf.d /usr/local/libexec
+  local detected_autologin_user
+  detected_autologin_user="$(active_lightdm_setting "$LIGHTDM_MAIN" autologin-user)"
+  if [[ -n "$detected_autologin_user" && "$detected_autologin_user" != "$APP_USER" ]]; then
+    echo "LightDM autologin-user is '$detected_autologin_user', not the installed appliance user '$APP_USER'." >&2
+    exit 2
+  fi
+  patch_lightdm_main_sessions
   cat > "$LABWC_CONFIG/environment" <<EOF
 XCURSOR_THEME=LeftoverAchievementsInvisible
 XCURSOR_SIZE=1
@@ -159,7 +226,7 @@ DesktopNames=LeftoverAchievements
 EOF
   cat > "$LIGHTDM_CONFIG" <<EOF
 [Seat:*]
-autologin-user=$APP_USER
+autologin-user=${detected_autologin_user:-$APP_USER}
 autologin-user-timeout=0
 autologin-session=leftover-achievements
 user-session=leftover-achievements

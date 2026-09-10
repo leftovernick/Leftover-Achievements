@@ -1344,6 +1344,11 @@ async def display(request: Request):
     )
 
 
+@app.get("/api/setup/status")
+async def setup_status():
+    return {"setup_complete": db.setup_complete()}
+
+
 @app.get("/display/dashboard-qr.png", include_in_schema=False)
 async def display_dashboard_qr(request: Request):
     dashboard_url = local_device_details(request)["dashboard_url"]

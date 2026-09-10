@@ -127,6 +127,8 @@ class RaspberryPiPackageTests(unittest.TestCase):
         self.assertIn("WorkingDirectory=$CURRENT", helper)
         self.assertIn("$CURRENT/scripts/run-kiosk-session.sh", helper)
         self.assertIn("user-session=leftover-achievements", helper)
+        self.assertIn("LIGHTDM_MAIN=/etc/lightdm/lightdm.conf", helper)
+        self.assertIn("patch_lightdm_main_sessions", helper)
         self.assertIn("LEFTOVER_DATA_DIR=$DATA_DIR", helper)
         self.assertNotIn("eval ", helper)
         self.assertNotIn("git fetch", updater)

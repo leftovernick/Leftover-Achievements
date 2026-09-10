@@ -247,7 +247,15 @@ authentication, so only expose port 8000 on a trusted network.
 ### 3. Dedicated labwc appliance session
 
 The bootstrap installs a `leftover-achievements` Wayland session and selects it in a
-small LightDM override. It runs labwc with a private configuration directory under
+small LightDM override. Current Raspberry Pi OS can give active session assignments
+in `/etc/lightdm/lightdm.conf` precedence over that drop-in, so the installer also
+changes only active `user-session` and `autologin-session` values in the main file.
+It preserves `autologin-user`, comments, and every unrelated LightDM setting. The
+original session values are recorded once under `/etc/leftover-achievements/`, making
+repeated installs idempotent and allowing appliance-mode recovery to restore the prior
+desktop session.
+
+The appliance session runs labwc with a private configuration directory under
 `/etc/leftover-achievements/labwc`; its autostart contains the kiosk and optional
 `kanshi`/`swaybg` support only. It does not source the Raspberry Pi desktop labwc
 configuration, so `wf-panel-pi`, PCManFM, desktop icons, and the normal wallpaper are
@@ -345,6 +353,11 @@ cd ~/.local/share/LeftoverAchievements/app/current
 sudo ./scripts/configure-pi-appliance-session.sh disable
 sudo reboot
 ```
+
+Disabling removes the LeftoverAchievements drop-in and session entry, and restores
+the saved active session values in `/etc/lightdm/lightdm.conf` (normally
+`rpd-labwc`). It does not replace the whole LightDM file or change the configured
+autologin user.
 
 Re-enable and verify appliance mode when troubleshooting is complete:
 

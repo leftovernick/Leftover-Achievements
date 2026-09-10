@@ -22,5 +22,31 @@
       </section>
       {% if onboarding_qr %}<img class="setup-qr" src="{{ onboarding_qr }}" alt="QR code for {{ onboarding_url }}" />{% endif %}
     </main>
+    <script>
+      (() => {
+        const retryMilliseconds = 3000;
+        let navigationStarted = false;
+
+        async function checkSetupStatus() {
+          if (navigationStarted) return;
+          try {
+            const response = await window.fetch('/api/setup/status', { cache: 'no-store' });
+            if (response.ok) {
+              const status = await response.json();
+              if (status.setup_complete === true) {
+                navigationStarted = true;
+                window.location.replace('/display');
+                return;
+              }
+            }
+          } catch (_error) {
+            // Keep the useful setup screen visible while the local backend restarts.
+          }
+          window.setTimeout(checkSetupStatus, retryMilliseconds);
+        }
+
+        window.setTimeout(checkSetupStatus, retryMilliseconds);
+      })();
+    </script>
   </body>
 </html>
