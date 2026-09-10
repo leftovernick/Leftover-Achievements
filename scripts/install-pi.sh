@@ -67,7 +67,7 @@ fi
 
 if [[ -r /proc/device-tree/model ]] && grep -aq "Raspberry Pi" /proc/device-tree/model; then
   echo
-  echo "Configuring LeftoverAchievements boot branding ..."
+  echo "Configuring safe black/quiet appliance boot ..."
   sudo "$PROJECT_ROOT/scripts/configure-pi-boot-branding.sh" enable
   echo
   echo "Configuring the dedicated LeftoverAchievements labwc session ..."

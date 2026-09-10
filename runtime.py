@@ -94,7 +94,9 @@ class RuntimeEnvironment:
 
     @property
     def is_packaged(self) -> bool:
-        return self.mode in {RuntimeMode.MACOS_PACKAGED, RuntimeMode.WINDOWS_PACKAGED}
+        return self.mode in {RuntimeMode.MACOS_PACKAGED, RuntimeMode.WINDOWS_PACKAGED} or (
+            self.mode is RuntimeMode.RASPBERRY_PI and self.installed_version is not None
+        )
 
     @property
     def is_pi_appliance(self) -> bool:
@@ -149,6 +151,10 @@ class RuntimeEnvironment:
             return f"{APP_NAME}-macOS-{self.architecture}-{version}.zip"
         if self.mode is RuntimeMode.WINDOWS_PACKAGED:
             return f"{APP_NAME}-Windows-x64-{version}.zip"
+        if self.mode is RuntimeMode.RASPBERRY_PI:
+            if self.architecture != "arm64":
+                return None
+            return f"{APP_NAME}-Pi-arm64-{version}.tar.gz"
         return None
 
 
@@ -196,11 +202,17 @@ def _data_directory(mode: RuntimeMode, resource_root: Path) -> Path:
         local_app_data = os.getenv("LOCALAPPDATA")
         base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
         return base / APP_NAME
+    if mode is RuntimeMode.RASPBERRY_PI and (resource_root / "build-version.txt").is_file():
+        return Path.home() / ".local" / "share" / APP_NAME / "data"
     return resource_root
 
 
 def _packaged_version(resource_root: Path, mode: RuntimeMode) -> str | None:
-    if mode not in {RuntimeMode.MACOS_PACKAGED, RuntimeMode.WINDOWS_PACKAGED}:
+    if mode not in {
+        RuntimeMode.MACOS_PACKAGED,
+        RuntimeMode.WINDOWS_PACKAGED,
+        RuntimeMode.RASPBERRY_PI,
+    }:
         return None
     try:
         value = (resource_root / "build-version.txt").read_text(encoding="utf-8").strip()
@@ -219,7 +231,11 @@ def normalize_architecture(machine: str) -> str:
 
 
 def _runtime_architecture(resource_root: Path, mode: RuntimeMode) -> str:
-    if mode in {RuntimeMode.MACOS_PACKAGED, RuntimeMode.WINDOWS_PACKAGED}:
+    if mode in {
+        RuntimeMode.MACOS_PACKAGED,
+        RuntimeMode.WINDOWS_PACKAGED,
+        RuntimeMode.RASPBERRY_PI,
+    }:
         try:
             embedded = (resource_root / "build-architecture.txt").read_text(
                 encoding="utf-8"
@@ -254,6 +270,7 @@ def detect_runtime() -> RuntimeEnvironment:
     resources = _resource_root()
     data = _data_directory(mode, resources)
     mutable_audio = data / "audio" if mode in {
+        RuntimeMode.RASPBERRY_PI,
         RuntimeMode.MACOS_PACKAGED,
         RuntimeMode.WINDOWS_PACKAGED,
     } else resources / "static" / "audio"

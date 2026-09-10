@@ -11,7 +11,8 @@ while (( ! STOP )); do
   "$SCRIPT_DIR/start-kiosk.sh"
   status=$?
   (( STOP )) && break
-  if (( status == 0 )) && [[ -e "${XDG_CONFIG_HOME:-$HOME/.config}/leftover-achievements/disable-kiosk" ]]; then
+  state_dir="${LEFTOVER_DATA_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/leftover-achievements}"
+  if (( status == 0 )) && [[ -e "$state_dir/disable-kiosk" ]]; then
     break
   fi
   sleep 2 &

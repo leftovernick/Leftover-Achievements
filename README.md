@@ -166,13 +166,15 @@ has no console window. For startup diagnosis, build a console-enabled variant wi
 Publishing a stable GitHub Release automatically invokes these same scripts in the
 `Build packaged release assets` workflow. Independent native jobs build Apple
 Silicon macOS on `macos-15`, Intel macOS on `macos-15-intel`, and Windows x64 on
-`windows-latest`. Each job checks out the Release tag explicitly, embeds that exact
-tag, validates the ZIP contents and frozen server, and attaches one predictably named
+`windows-latest`. A fourth job builds the Pi source bundle on GitHub's native
+`ubuntu-24.04-arm` runner. Each job checks out the Release tag explicitly, embeds that
+exact tag, validates its archive, and attaches one predictably named
 asset to the same Release:
 
 - `LeftoverAchievements-macOS-arm64-v1.2.0.zip`
 - `LeftoverAchievements-macOS-x64-v1.2.0.zip`
 - `LeftoverAchievements-Windows-x64-v1.2.0.zip`
+- `LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz`
 
 Rerunning a job replaces its existing same-named asset. A failed job uploads
 nothing, and does not prevent the other platform job from producing its asset.
@@ -188,52 +190,37 @@ Wayland with the labwc window manager and include Chromium. The backend runs as 
 systemd service. Production appliance mode selects a separate minimal labwc session;
 the normal Raspberry Pi desktop, panel, file manager, and wallpaper are not started.
 
-### 1. Clone and install
+### 1. Fresh install from a GitHub Release
 
-On the Raspberry Pi, clone the repository into a permanent location owned by the
-normal desktop user. The examples below use `~/LeftoverAchievements`:
+For a freshly reimaged Pi, select **Raspberry Pi OS (64-bit) with Desktop**, configure
+the normal user, Wi-Fi/Ethernet, and SSH in Raspberry Pi Imager, then boot once and run
+this command as the normal user:
 
 ```bash
-git clone YOUR_REPOSITORY_URL ~/LeftoverAchievements
-cd ~/LeftoverAchievements
-./scripts/install-pi.sh
+curl -fsSL https://raw.githubusercontent.com/leftovernick/Leftover-Achievements/main/scripts/bootstrap-pi.sh | bash
 ```
 
-The installer creates `.venv`, installs `requirements.txt`, ensures the local database
-directory exists, marks the launch scripts executable, and creates `.env` from
-`.env.example` only when `.env` does not already exist. On Raspberry Pi hardware it
-also installs and verifies the branded boot configuration and dedicated kiosk session.
-It reports an `apt` command if `curl`, Chromium, or Python venv support is missing.
+The bootstrap requires Raspberry Pi OS `aarch64`. It installs prerequisites, queries
+the latest stable GitHub Release, selects only its matching Pi ARM64 asset, validates
+the archive and embedded version, builds a release-specific virtual environment, and
+atomically selects the release. It then configures systemd, the narrow privileged
+migration helper, safe black boot, and the dedicated kiosk session. Git and manual
+configuration-file editing are not required. Do not install
+`rpi-splash-screen-support`.
 
 After installation, open the dashboard from another device on the same network and
 follow the setup guide. Before setup is complete, the Pi display shows the setup URL,
 device address, and a QR code instead of an empty carousel. An existing `RA_API_KEY`
 in `.env` can still be verified by the guide until a key is saved through the web UI.
 
-Keep `LEFTOVER_ACHIEVEMENTS_DB_PATH=database/leftover.db` to store persistent SQLite
-data inside the project. Relative database paths are resolved from the project root;
-an absolute path may be used instead. If the variable is omitted, the existing macOS
-default remains `database/leftover.db`. Back up this file when preserving user and
-achievement history matters.
+### 2. Installed layout
 
-### 2. Install the backend service
-
-Copy the service template and edit its placeholders:
-
-```bash
-sudo cp deploy/leftover-achievements.service /etc/systemd/system/leftover-achievements.service
-sudo nano /etc/systemd/system/leftover-achievements.service
-```
-
-Replace every `YOUR_USER` with the normal, non-root desktop username. If the repository
-is not at `/home/YOUR_USER/LeftoverAchievements`, replace all three project paths with
-the absolute output of `pwd` from the repository directory. Then enable the service:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now leftover-achievements
-sudo systemctl status leftover-achievements
-```
+Application releases are stored under
+`~/.local/share/LeftoverAchievements/app/releases/vX.Y.Z/`. The atomic
+`~/.local/share/LeftoverAchievements/app/current` symlink selects the active release.
+Persistent state is separate under `~/.local/share/LeftoverAchievements/data/`,
+including `leftover.db`, `.env`, custom audio, updater state, and logs. Updates never
+replace this data directory.
 
 The production launcher binds Uvicorn to `0.0.0.0:8000` without reload mode. The Pi
 uses `http://127.0.0.1:8000/display`; another device on the same LAN can open the
@@ -242,7 +229,7 @@ authentication, so only expose port 8000 on a trusted network.
 
 ### 3. Dedicated labwc appliance session
 
-`install-pi.sh` installs a `leftover-achievements` Wayland session and selects it in a
+The bootstrap installs a `leftover-achievements` Wayland session and selects it in a
 small LightDM override. It runs labwc with a private configuration directory under
 `/etc/leftover-achievements/labwc`; its autostart contains the kiosk and optional
 `kanshi`/`swaybg` support only. It does not source the Raspberry Pi desktop labwc
@@ -259,48 +246,51 @@ new keyring or first-run prompt does not interrupt startup. The session supplies
 transparent Xcursor theme, scoped only to the appliance session; `/display` also uses
 `cursor: none` as defense in depth. Touch and pointer gestures continue to work.
 
-### 4. Branded boot splash
+### 4. Safe black/quiet boot
 
-On Raspberry Pi hardware, `install-pi.sh` also enables the branded early boot splash.
-It detects a matching `config.txt`/`cmdline.txt` pair under `/boot/firmware` (current
-OS) or `/boot` (legacy OS); it never mixes the two layouts. It installs Raspberry Pi
-OS's supported `rpi-splash-screen-support` package when needed, suppresses the
-firmware rainbow screen with `disable_splash=1`, disables the stock Plymouth splash
-token and visible tty1, enables low-log-level/status-suppressed boot, validates and installs
-`deploy/boot/leftover-achievements-splash.tga`, and rebuilds the initramfs. The
-supplied TGA is a dark 1280×720 derivative of the existing project logo, not a
-separate logo design.
+On Raspberry Pi hardware, the bootstrap detects a matching `config.txt`/`cmdline.txt`
+pair under `/boot/firmware` (current OS) or `/boot` (legacy OS); it never mixes the two
+layouts. It keeps the firmware-level `disable_splash=1`, removes the stock Plymouth
+`splash` token and visible tty1 console, suppresses kernel-logo and systemd-status
+output, and uses `quiet loglevel=3`.
+
+The default path deliberately does **not** install or run
+`rpi-splash-screen-support`, configure `fullscreen_logo`, add a Plymouth theme, copy
+an image into the initramfs, or rebuild the initramfs. Real Pi 4 DSI testing showed
+that an early userspace splash can fail before networking and expose a crash
+backtrace on the framebuffer. There is no reliable generic probe that proves a given
+display/controller/driver combination supports that path, so this project does not
+offer an automatic advanced splash mode. Uncertain hardware always falls back to a
+black display until the graphical session is ready.
 
 The intended handoff is:
 
-1. Firmware starts with its display suppressed where supported.
-2. The kernel draws the centered LeftoverAchievements early splash.
-3. Chromium starts on the matching local loading screen.
+1. Firmware starts with its rainbow/logo output suppressed where supported.
+2. The screen remains black while hardware, the kernel, and the compositor initialize.
+3. The dedicated labwc session starts Chromium on the branded local loading screen.
 4. The loading screen transitions to `/display` when the backend is ready.
 
 The project preserves one-time `.leftover-achievements.bak` copies beside both files.
-The helper is invoked with `--no-cmdline` because its own command-line edit targets
-the modern path; the project then updates the path it actually detected. The literal
-`quiet` token is omitted because the supported helper identifies it as conflicting
-with fullscreen-logo mode; removing tty1 and Plymouth while using `loglevel=3` and
-disabled systemd status still prevents local boot text without silencing recovery
-output on another configured console.
+Re-running the installer is idempotent. It also removes legacy `fullscreen_logo`
+parameters left by an older release, which deactivates that crash-prone boot path
+without touching or rebuilding the installed initramfs.
 The installer does not mask boot, getty, display-manager, or emergency services.
 SSH and alternate virtual consoles therefore remain available.
 
-Check or reapply the branding with:
+Check or reapply appliance boot suppression with:
 
 ```bash
+cd ~/.local/share/LeftoverAchievements/app/current
 sudo ./scripts/configure-pi-boot-branding.sh status
 sudo ./scripts/configure-pi-boot-branding.sh enable
-sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$(pwd)"
+sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$HOME/.local/share/LeftoverAchievements/app/current"
 ```
 
 Very early firmware, monitor-link training, and display-driver initialization happen
-before Linux can draw the custom image. A short black frame can therefore remain.
-Some DSI displays whose driver is unavailable in the initramfs may not show the early
-image; they remain dark until the graphical session starts. The project deliberately
-does not patch firmware or add an unsupported framebuffer hack for those frames.
+before the application can draw. A black interval is therefore expected. DSI displays
+in particular may not support a safe early branded splash and remain black until the
+dedicated graphical session starts. The project deliberately does not patch firmware
+or add an unsupported framebuffer/initramfs workaround.
 
 ### 5. Reboot and verify
 
@@ -312,8 +302,7 @@ Expected boot sequence:
 
 1. systemd waits for the network-online target, starts FastAPI, and restarts it after
    a crash.
-2. The branded early splash covers normal kernel startup where the display driver
-   supports it.
+2. The display remains black through kernel and hardware initialization.
 3. LightDM logs the configured user directly into the dedicated minimal labwc
    appliance session; the normal Raspberry Pi desktop is not launched.
 4. labwc displays the dark branded background and starts the matching local loading
@@ -343,10 +332,11 @@ also safe to retain.
 
 ### Troubleshooting and recovery
 
-To temporarily return to the normal OS desktop, disable only the appliance-session
-selection over SSH or from an alternate console, then reboot:
+To temporarily return to the normal OS desktop, run these commands over SSH or from
+an alternate console:
 
 ```bash
+cd ~/.local/share/LeftoverAchievements/app/current
 sudo ./scripts/configure-pi-appliance-session.sh disable
 sudo reboot
 ```
@@ -354,8 +344,9 @@ sudo reboot
 Re-enable and verify appliance mode when troubleshooting is complete:
 
 ```bash
-sudo ./scripts/configure-pi-appliance-session.sh enable "$(id -un)" "$(pwd)"
-sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$(pwd)"
+cd ~/.local/share/LeftoverAchievements/app/current
+sudo ./scripts/configure-pi-appliance-session.sh enable "$(id -un)" "$PWD"
+sudo ./scripts/configure-pi-appliance-session.sh status "$(id -un)" "$PWD"
 sudo reboot
 ```
 
@@ -365,16 +356,16 @@ B1`. Restore desktop auto-login with the same menu or
 `sudo raspi-config nonint do_boot_behaviour B4`. SSH is unaffected by either mode.
 On an attached keyboard, Ctrl+Alt+F2 also reaches an alternate console.
 
-To disable the custom early splash and restore a conventional quiet console boot:
+To disable appliance boot suppression and restore a conventional visible console:
 
 ```bash
 sudo ./scripts/configure-pi-boot-branding.sh disable
 sudo reboot
 ```
 
-This recovery command removes only the project's marked `config.txt` block and its
-fullscreen-logo kernel parameters, restores `console=tty1 quiet`, and rebuilds the
-initramfs. It does not disable SSH or change the normal graphical boot target.
+This recovery command removes only the project's marked `config.txt` block and managed
+kernel parameters and restores `console=tty1 quiet`. It does not touch the initramfs,
+disable SSH, or change the normal graphical boot target.
 
 ### Application updates
 
@@ -386,40 +377,44 @@ required for the public repository.
 
 When an update is available, use **Settings → Application Update** from the web
 dashboard or swipe down from the top edge of the touchscreen and choose **Update**.
-The installer requires a clean tracked worktree, fetches the selected release tag,
-refuses same-version or older releases, checks out that exact tag in detached HEAD
-mode, updates `.venv` from `requirements.txt`, and restarts only the backend service.
-Detached HEAD is the expected production state after the first release update and
-does not prevent future updates. Ignored files such as `.env`, the SQLite database,
-and updater logs are not modified.
+The updater downloads the matching Pi ARM64 TAR.GZ into temporary staging, validates
+its paths, platform, embedded version, and exclusions, then builds dependencies inside
+the new version directory. Only after all of that succeeds does it atomically replace
+the `current` symlink, apply vetted system configuration, and restart the service.
+Progress reports Downloading, Validating, Preparing, Installing, Applying system
+changes, Restarting, and Reconnecting. No Git command or working tree is involved.
 
-For an already-installed Pi upgrading from the former desktop-autostart design, the
-release update preserves `.env`, onboarding state, the SQLite database, tracked users,
-and history. Because selecting a system login session and changing boot files requires
-root access that the deliberately narrow updater sudo rule does not grant, run
-`./scripts/install-pi.sh` once after installing this release, then reboot. Later normal
-application updates do not require this migration step. The installer keeps existing
-configuration and data and prints the detected boot paths and verification results.
+The bootstrap installs a root-owned helper at
+`/usr/local/sbin/leftover-achievements-migrate`. Its sudo rule allows the appliance
+user to invoke only its argument-free `apply` action and restart the one managed
+service. The helper derives paths from a root-owned user record, rejects releases
+outside the fixed version directory, validates version/architecture metadata, and
+writes only the LeftoverAchievements service, kiosk-session selection, and sudoers
+files. For future explicit migrations it can refresh only the helper shipped at the
+active stable tag from the fixed LeftoverAchievements GitHub repository; it validates
+the helper identity and shell syntax before installing it. It cannot run an arbitrary
+command, URL, or path supplied by the application.
 
-A new Pi initially cloned from `main` is shown as a **Development build** until HEAD
-exactly matches a stable version tag. If a stable release exists, that unversioned
-installation can install it through the normal Update button; subsequent checks use
-the installed tag for semantic version comparisons.
+If archive validation, dependency installation, system application, or service
+restart fails, the prior version remains selected or is restored. Persistent data is
+never part of the staged release.
 
-The normal service user needs permission to restart this one service. Edit the
-included sudoers template, validate it, and install it with restrictive permissions:
+### Existing Git-checkout migration
+
+For the currently deployed `~/Leftover-Achievements` Pi, run the same bootstrap once:
 
 ```bash
-sed "s/YOUR_USER/$USER/g" deploy/leftover-achievements-update.sudoers | sudo tee /etc/sudoers.d/leftover-achievements-update >/dev/null
-sudo chmod 0440 /etc/sudoers.d/leftover-achievements-update
-sudo visudo -cf /etc/sudoers.d/leftover-achievements-update
+curl -fsSL https://raw.githubusercontent.com/leftovernick/Leftover-Achievements/main/scripts/bootstrap-pi.sh | bash
+sudo reboot
 ```
 
-The rule permits only `/usr/bin/systemctl restart leftover-achievements.service`;
-it does not grant general passwordless sudo. Confirm that `command -v systemctl`
-prints `/usr/bin/systemctl` on the Pi before installing the template. Update progress
-is logged to `.update.log`. A failed update leaves persisted application data alone
-and reports the last log message in both interfaces.
+It detects `~/Leftover-Achievements` and `~/LeftoverAchievements`, copies `.env`, the
+configured/default SQLite database, and `custom-*` audio only when the destination is
+empty, and migrates an environment-only RA API key into the database. Onboarding,
+tracked users, histories, cached event deduplication, and settings therefore survive.
+The old checkout is not deleted; keep it until the packaged installation has been
+verified, then archive or remove it manually if desired. All later updates use release
+assets and require no Git checkout.
 
 #### Publishing a release with GitHub Desktop
 
@@ -436,9 +431,9 @@ When a build is ready for users:
 5. Target the desired commit (normally the verified commit on `main`).
 6. Write the human-authored release title and notes.
 7. Leave **Set as a pre-release** off, then publish the Release.
-8. Open the **Actions** tab and follow all three native package jobs.
-9. Confirm that the macOS arm64, macOS x64, and Windows x64 ZIPs appear under the
-   same Release.
+8. Open the **Actions** tab and follow all four package jobs.
+9. Confirm that the macOS arm64, macOS x64, Windows x64, and Pi arm64 assets appear
+   under the same Release.
 10. Installed LeftoverAchievements devices detect that stable published version.
 
 Publishing the Release is the explicit **ship this version** action. Ordinary commits
@@ -446,7 +441,5 @@ and pushes never create device updates or desktop packages. After publication, a
 detects the tag during its next check and waits for the user to install it from Quick
 Settings or web Settings. Packaged desktop installations detect the matching attached
 ZIP and direct the user to download it manually. No command-line Git is needed to
-publish releases.
-
-After moving the repository, update the paths in the installed systemd unit and labwc
-autostart entry, then run `sudo systemctl daemon-reload` and restart the service.
+publish releases. Packaged Pi paths are stable and do not need editing when releases
+change.

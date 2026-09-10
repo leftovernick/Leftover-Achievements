@@ -25,7 +25,8 @@ resolve_inputs() {
   USER_HOME="$(getent passwd "$APPLIANCE_USER" | cut -d: -f6)"
   [[ -n "$USER_HOME" && "$APPLIANCE_USER" != root ]] || { echo "Error: kiosk user '$APPLIANCE_USER' is invalid." >&2; exit 1; }
   [[ -n "$PROJECT_ROOT" ]] || PROJECT_ROOT="$USER_HOME/LeftoverAchievements"
-  PROJECT_ROOT="$(realpath -e "$PROJECT_ROOT")"
+  [[ "$PROJECT_ROOT" == /* && "$PROJECT_ROOT" != *$'\n'* ]] || { echo "Error: project path must be an absolute path." >&2; exit 1; }
+  PROJECT_ROOT="${PROJECT_ROOT%/}"
   [[ -x "$PROJECT_ROOT/scripts/start-kiosk.sh" ]] || { echo "Error: start-kiosk.sh is missing or not executable in $PROJECT_ROOT." >&2; exit 1; }
   [[ -f "$PROJECT_ROOT/static/images/leftover-achievements-logo.png" ]] || { echo "Error: project logo is missing." >&2; exit 1; }
 }
@@ -97,11 +98,12 @@ enable_session() {
   install -d -m 0755 "$CONFIG_DIR" /usr/local/libexec /etc/lightdm/lightdm.conf.d
   install_invisible_cursor
 
-  cat > "$CONFIG_DIR/environment" <<'EOF'
+  cat > "$CONFIG_DIR/environment" <<EOF
 XCURSOR_THEME=LeftoverAchievementsInvisible
 XCURSOR_SIZE=1
 XCURSOR_PATH=/usr/share/icons
 XDG_CURRENT_DESKTOP=LeftoverAchievements
+LEFTOVER_DATA_DIR=$USER_HOME/.local/share/LeftoverAchievements/data
 EOF
   cat > "$CONFIG_DIR/rc.xml" <<'EOF'
 <?xml version="1.0"?>
@@ -187,7 +189,7 @@ show_status() {
     echo "[warning] Kiosk autostart is missing or includes desktop-shell processes."
     failed=1
   fi
-  if [[ -f "$CONFIG_DIR/environment" ]] && grep -Fqx 'XCURSOR_THEME=LeftoverAchievementsInvisible' "$CONFIG_DIR/environment" && [[ -f "$CURSOR_THEME/cursors/left_ptr" ]]; then
+  if [[ -f "$CONFIG_DIR/environment" ]] && grep -Fqx 'XCURSOR_THEME=LeftoverAchievementsInvisible' "$CONFIG_DIR/environment" && grep -Fqx "LEFTOVER_DATA_DIR=$USER_HOME/.local/share/LeftoverAchievements/data" "$CONFIG_DIR/environment" && [[ -f "$CURSOR_THEME/cursors/left_ptr" ]]; then
     echo "[ok] Session-scoped invisible Wayland cursor is installed."
   else
     echo "[warning] Appliance cursor hiding is incomplete."

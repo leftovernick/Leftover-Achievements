@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Validate a packaged release ZIP before it is published."""
+"""Validate desktop ZIPs and Raspberry Pi TAR.GZ release packages."""
 
 from __future__ import annotations
 
 import argparse
 import re
 import sys
+import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
 from packaging.version import InvalidVersion, Version
+try:
+    from scripts.pi_package import validate_pi_archive
+except ModuleNotFoundError:  # Direct execution sets sys.path to scripts/.
+    from pi_package import validate_pi_archive
 
 
 VERSION_PATTERN = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+(?:[.+-][0-9A-Za-z.-]+)?$")
@@ -44,10 +49,14 @@ def expected_artifact_name(
         if architecture not in {"arm64", "x64"}:
             raise ValueError("macOS release packages require architecture arm64 or x64")
         platform_architecture = f"macOS-{architecture}"
-    else:
+    elif platform == "windows":
         if architecture not in {None, "x64"}:
             raise ValueError("Windows release packages currently require architecture x64")
         platform_architecture = "Windows-x64"
+    else:
+        if architecture != "arm64":
+            raise ValueError("Raspberry Pi release packages require architecture arm64")
+        platform_architecture = "Pi-arm64"
     return f"LeftoverAchievements-{platform_architecture}-{version}"
 
 
@@ -58,6 +67,9 @@ def validate_archive(
     architecture: str | None = None,
 ) -> None:
     stable_version(version)
+    if platform == "pi":
+        validate_pi_archive(archive, version)
+        return
     artifact_name = expected_artifact_name(platform, version, architecture)
     expected_archive = f"{artifact_name}.zip"
     if archive.name != expected_archive:
@@ -123,14 +135,14 @@ def validate_archive(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--platform", choices=("macos", "windows"), required=True)
+    parser.add_argument("--platform", choices=("macos", "windows", "pi"), required=True)
     parser.add_argument("--architecture", choices=("arm64", "x64"))
     parser.add_argument("--version", required=True)
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     try:
         validate_archive(args.platform, args.version, args.archive, args.architecture)
-    except (OSError, UnicodeError, ValueError, zipfile.BadZipFile) as exc:
+    except (OSError, UnicodeError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
         print(f"Release package validation failed: {exc}", file=sys.stderr)
         return 1
     print(f"Validated {args.archive}")

@@ -48,6 +48,7 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         mac_arm64 = self.environment(RuntimeMode.MACOS_PACKAGED, architecture="arm64")
         mac_x64 = self.environment(RuntimeMode.MACOS_PACKAGED, architecture="x64")
         windows = self.environment(RuntimeMode.WINDOWS_PACKAGED)
+        pi = self.environment(RuntimeMode.RASPBERRY_PI, version="v1.2.0")
         self.assertEqual(
             mac_arm64.release_asset_name("v1.2.0"),
             "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
@@ -60,6 +61,16 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             windows.release_asset_name("v1.2.0"),
             "LeftoverAchievements-Windows-x64-v1.2.0.zip",
         )
+        self.assertEqual(
+            pi.release_asset_name("v1.2.0"),
+            "LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",
+        )
+
+    def test_packaged_pi_uses_persistent_data_directory(self):
+        pi = self.environment(RuntimeMode.RASPBERRY_PI, version="v1.2.0")
+        self.assertTrue(pi.is_packaged)
+        self.assertEqual(pi.database_path, self.root / "data" / "leftover.db")
+        self.assertEqual(pi.mutable_audio_dir, self.root / "data" / "audio")
 
     def test_unknown_macos_architecture_does_not_offer_wrong_asset(self):
         mac = self.environment(RuntimeMode.MACOS_PACKAGED, architecture="unknown")

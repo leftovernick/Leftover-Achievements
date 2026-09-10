@@ -24,8 +24,11 @@
     : 'Unavailable';
 
   const phaseLabel = (phase) => ({
+    downloading: 'Downloading package…',
+    validating: 'Validating package…',
     preparing: 'Preparing update…',
     installing: 'Installing dependencies…',
+    applying: 'Applying system changes…',
     restarting: 'Restarting service…',
   }[phase] || 'Updating…');
 
@@ -82,7 +85,7 @@
     } catch (requestError) {
       summary.textContent = updateRunning ? 'Reconnecting…' : 'Unable to check';
       error.hidden = false;
-      error.textContent = updateRunning ? 'The service is restarting. This page will reconnect automatically.' : requestError.message;
+      error.textContent = updateRunning ? 'The service is restarting. Reconnecting…' : requestError.message;
     }
     window.setTimeout(poll, updateRunning ? 2000 : 60000);
   };

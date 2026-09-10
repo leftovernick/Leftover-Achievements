@@ -5,11 +5,13 @@ After=network-online.target
 
 [Service]
 Type=simple
-# Replace YOUR_USER and the project path below before installing this unit.
+# Reference template; bootstrap generates this without manual editing.
 User=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/LeftoverAchievements
-EnvironmentFile=/home/YOUR_USER/LeftoverAchievements/.env
-ExecStart=/home/YOUR_USER/LeftoverAchievements/scripts/start-backend.sh
+WorkingDirectory=/home/YOUR_USER/.local/share/LeftoverAchievements/app/current
+Environment=LEFTOVER_RUNTIME_MODE=raspberry_pi
+Environment=LEFTOVER_DATA_DIR=/home/YOUR_USER/.local/share/LeftoverAchievements/data
+EnvironmentFile=-/home/YOUR_USER/.local/share/LeftoverAchievements/data/.env
+ExecStart=/home/YOUR_USER/.local/share/LeftoverAchievements/app/current/scripts/start-backend.sh
 Restart=on-failure
 RestartSec=3
 # Uvicorn normally exits well before this; retain a systemd-level safety net.

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.updater import ApplicationUpdater, UpdateError
 from runtime import RuntimeEnvironment, RuntimeMode
@@ -100,6 +101,7 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             installed_version="v1.1.0",
             architecture="arm64",
         )
+        environment.ensure_runtime_directories()
 
         async def fetch_release(_repository: str):
             payload = release("v1.2.0")
@@ -172,6 +174,84 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             "LeftoverAchievements-macOS-x64-v1.2.0.zip",
         )
         self.assertTrue(state["latest_release_asset_url"].endswith("/x64.zip"))
+
+    async def test_packaged_pi_discovers_only_arm64_tarball(self):
+        data = self.root / "data"
+        environment = RuntimeEnvironment(
+            mode=RuntimeMode.RASPBERRY_PI,
+            resource_root=self.root,
+            data_dir=data,
+            logs_dir=data / "logs",
+            mutable_audio_dir=data / "audio",
+            installed_version="v1.1.0",
+            architecture="arm64",
+        )
+
+        async def fetch_release(_repository: str):
+            payload = release("v1.2.0")
+            payload["assets"] = [
+                {
+                    "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/mac.zip",
+                },
+                {
+                    "name": "LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",
+                },
+            ]
+            return payload
+
+        updater = ApplicationUpdater(
+            self.root,
+            repository="example/project",
+            release_fetcher=fetch_release,
+            runtime_environment=environment,
+        )
+        state = await updater.check()
+        self.assertTrue(state["install_supported"])
+        self.assertEqual(
+            state["latest_release_asset_name"],
+            "LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",
+        )
+        self.assertTrue(state["latest_release_asset_url"].endswith(".tar.gz"))
+
+    async def test_packaged_pi_install_does_not_call_git(self):
+        data = self.root / "data"
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/update-app.sh").write_text("#!/bin/sh\n")
+        environment = RuntimeEnvironment(
+            mode=RuntimeMode.RASPBERRY_PI,
+            resource_root=self.root,
+            data_dir=data,
+            logs_dir=data / "logs",
+            mutable_audio_dir=data / "audio",
+            installed_version="v1.1.0",
+            architecture="arm64",
+        )
+        environment.ensure_runtime_directories()
+
+        async def fetch_release(_repository: str):
+            payload = release("v1.2.0")
+            payload["assets"] = [{
+                "name": "LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",
+                "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",
+            }]
+            return payload
+
+        updater = ApplicationUpdater(
+            self.root,
+            repository="example/project",
+            release_fetcher=fetch_release,
+            runtime_environment=environment,
+        )
+        updater._run_git = AsyncMock(side_effect=AssertionError("Git must not run"))
+        updater._watch_install = AsyncMock()
+        process = MagicMock()
+        with patch("services.updater.subprocess.Popen", return_value=process) as popen:
+            state = await updater.install()
+        self.assertTrue(state["installing"])
+        command = popen.call_args.args[0]
+        self.assertEqual(command[-1], "https://github.com/example/project/releases/download/v1.2.0/LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz")
 
 
 if __name__ == "__main__":

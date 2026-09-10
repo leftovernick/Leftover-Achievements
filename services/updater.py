@@ -131,7 +131,7 @@ class ApplicationUpdater:
                 self.phase_path.unlink(missing_ok=True)
             except OSError:
                 pass
-        elif phase in {"preparing", "installing"}:
+        elif phase in {"downloading", "validating", "preparing", "installing", "applying"}:
             self._state["installing"] = True
             self._state["install_phase"] = phase
         elif phase == "failed":
@@ -374,9 +374,15 @@ class ApplicationUpdater:
                     or "Automatic installation is not supported for this deployment."
                 )
 
-            dirty = await self._run_git("status", "--porcelain", "--untracked-files=no")
-            if dirty:
-                raise UpdateError("Tracked local changes are present. Commit or restore them before updating.")
+            if self.runtime and self.runtime.is_pi_appliance:
+                if not state["latest_release_asset_url"]:
+                    raise UpdateError(
+                        f"GitHub Release is missing {state['latest_release_asset_name']}."
+                    )
+            else:
+                dirty = await self._run_git("status", "--porcelain", "--untracked-files=no")
+                if dirty:
+                    raise UpdateError("Tracked local changes are present. Commit or restore them before updating.")
             if not self.script_path.is_file():
                 raise UpdateError("The application update script is missing.")
 
@@ -388,6 +394,7 @@ class ApplicationUpdater:
                         str(self.script_path),
                         str(self.project_root),
                         state["latest_release_tag"],
+                        state["latest_release_asset_url"] or "",
                     ],
                     cwd=self.project_root,
                     stdin=subprocess.DEVNULL,
@@ -421,12 +428,16 @@ class ApplicationUpdater:
             phase = self.phase_path.read_text(encoding="utf-8").strip().splitlines()[0]
         except (OSError, IndexError):
             phase = self._state["install_phase"]
-        if phase in {"preparing", "installing", "restarting", "failed"}:
+        active_phases = {
+            "downloading", "validating", "preparing", "installing",
+            "applying", "restarting",
+        }
+        if phase in active_phases | {"failed"}:
             self._state["install_phase"] = phase
         if phase == "failed":
             self._state["installing"] = False
             self._state["error"] = self._install_error()
-        elif phase in {"preparing", "installing", "restarting"}:
+        elif phase in active_phases:
             self._state["installing"] = True
 
     def _install_error(self) -> str:

@@ -499,8 +499,11 @@
   };
 
   const updatePhaseLabel = (phase) => ({
+    downloading: 'Downloading package',
+    validating: 'Validating package',
     preparing: 'Preparing update',
     installing: 'Installing dependencies',
+    applying: 'Applying system changes',
     restarting: 'Restarting service',
   }[phase] || 'Updating');
 

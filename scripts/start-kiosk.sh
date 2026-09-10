@@ -6,8 +6,9 @@ RETRY_SECONDS="${LEFTOVER_ACHIEVEMENTS_RETRY_SECONDS:-2}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SPLASH_PAGE="$PROJECT_ROOT/deploy/kiosk-loading.html"
-DISABLE_MARKER="${XDG_CONFIG_HOME:-$HOME/.config}/leftover-achievements/disable-kiosk"
-KIOSK_PROFILE="${XDG_CONFIG_HOME:-$HOME/.config}/leftover-achievements/chromium-kiosk"
+KIOSK_STATE_DIR="${LEFTOVER_DATA_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/leftover-achievements}"
+DISABLE_MARKER="$KIOSK_STATE_DIR/disable-kiosk"
+KIOSK_PROFILE="$KIOSK_STATE_DIR/chromium-kiosk"
 
 if [[ -e "$DISABLE_MARKER" ]]; then
   echo "LeftoverAchievements kiosk is temporarily disabled by $DISABLE_MARKER."
