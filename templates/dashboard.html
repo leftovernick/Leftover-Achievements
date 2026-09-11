@@ -34,7 +34,7 @@
         </div>
       {% endif %}
 
-      <section class="panel current-activity-panel">
+      <section class="panel current-activity-panel" data-dashboard-refresh-section="current">
         <div class="panel-header">
           <h2>Current Activity</h2>
           <span>{{ currently_playing_users|length }} active</span>
@@ -136,7 +136,7 @@
         </div>
       </section>
 
-      <section class="panel recent-activity-panel">
+      <section class="panel recent-activity-panel" data-dashboard-refresh-section="recent">
         <div class="panel-header">
           <h2>Recent Activity</h2>
           <span>Latest 5 Hardcore unlocks</span>
@@ -165,6 +165,6 @@
         </table>
       </section>
     </main>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=live-activity-1"></script>
   </body>
 </html>

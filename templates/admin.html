@@ -109,6 +109,35 @@
         </div>
       </section>
 
+      <section class="panel application-error-log" id="recent-errors">
+        <div class="panel-header">
+          <h2>Recent Errors</h2>
+          <span>{{ recent_errors|length }} shown</span>
+        </div>
+        <div class="application-error-log-content">
+          <div class="application-error-log-heading">
+            <p>Recent backend warnings and errors from <code>{{ application_log_name }}</code>. Credentials are redacted.</p>
+            <a class="secondary-action" href="/admin#recent-errors">Refresh</a>
+          </div>
+          {% if recent_errors %}
+            <ol class="application-error-list">
+              {% for entry in recent_errors %}
+                <li class="error-level-{{ entry.level|lower }}">
+                  <div>
+                    <strong>{{ entry.level }}</strong>
+                    <time>{{ entry.timestamp }}</time>
+                    <span>{{ entry.source }}</span>
+                  </div>
+                  <p>{{ entry.message }}</p>
+                </li>
+              {% endfor %}
+            </ol>
+          {% else %}
+            <p class="application-error-empty">No recent backend warnings or errors.</p>
+          {% endif %}
+        </div>
+      </section>
+
       {% if macos_notification_status.supported %}
       <section class="panel display-settings">
         <div class="panel-header">

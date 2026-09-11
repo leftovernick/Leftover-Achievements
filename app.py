@@ -2,9 +2,12 @@ import os
 import asyncio
 import json
 import logging
+import re
 import base64
 import io
 import socket
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -56,6 +59,7 @@ RECENT_ACTIVITY_FETCH_MINUTES = 43200
 WEEKLY_CACHE_TTL = timedelta(minutes=10)
 PROFILE_CACHE_TTL = timedelta(minutes=5)
 CURRENTLY_PLAYING_CACHE_TTL = timedelta(seconds=75)
+CURRENTLY_PLAYING_STALE_MAX = timedelta(minutes=10)
 weekly_refresh_task = None
 history_backfill_task = None
 history_refresh_live_requested = False
@@ -74,6 +78,7 @@ history_backfill_status = {
     "message": "History data has not been checked in this server session.",
 }
 user_snapshot_refresh_task = None
+current_activity_poll_task = None
 recent_activity_refresh_task = None
 achievement_poll_task = None
 display_event_queues = set()
@@ -116,6 +121,38 @@ HISTORY_PAGE_WAIT_SECONDS = 20
 CHART_WEEK_RANGES = (4, 8, 12)
 RA_CONNECTION_CHECK_TTL = timedelta(minutes=15)
 logger = logging.getLogger(__name__)
+
+
+def ensure_persistent_error_logging() -> Path:
+    """Capture warnings in direct dev runs; launcher-managed builds already log here."""
+    runtime.logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = runtime.logs_dir / "leftover-achievements.log"
+    resolved_path = str(log_path.resolve())
+    root_logger = logging.getLogger()
+    already_configured = any(
+        getattr(handler, "baseFilename", None) == resolved_path
+        for handler in root_logger.handlers
+    )
+    if not already_configured:
+        handler = RotatingFileHandler(
+            log_path,
+            maxBytes=2 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setLevel(logging.WARNING)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root_logger.addHandler(handler)
+        if root_logger.level > logging.WARNING:
+            root_logger.setLevel(logging.WARNING)
+    return log_path
+
+
+APPLICATION_LOG_PATH = ensure_persistent_error_logging()
+LOG_ENTRY_PATTERN = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?) "
+    r"(?P<level>WARNING|ERROR|CRITICAL) (?P<source>[^:]+): (?P<message>.*)$"
+)
 
 
 def admin_redirect(message: str) -> RedirectResponse:
@@ -635,6 +672,45 @@ def cache_is_stale(refreshed_at: str | None, ttl: timedelta) -> bool:
     return datetime.now(timezone.utc) - refreshed > ttl
 
 
+def _tail_text(path: Path, max_bytes: int = 256 * 1024) -> str:
+    try:
+        with path.open("rb") as log_file:
+            log_file.seek(0, os.SEEK_END)
+            size = log_file.tell()
+            log_file.seek(max(0, size - max_bytes))
+            content = log_file.read()
+    except OSError:
+        return ""
+    return content.decode("utf-8", errors="replace")
+
+
+def recent_application_errors(limit: int = 30, log_path: Path | None = None) -> list[dict]:
+    """Read recent structured warnings/errors without exposing saved credentials."""
+    base_path = log_path or APPLICATION_LOG_PATH
+    paths = [Path(f"{base_path}.{index}") for index in range(3, 0, -1)] + [base_path]
+    entries = []
+    api_key = db.get_setting("ra_api_key")
+    secrets = [api_key] if api_key else []
+
+    for path in paths:
+        for line in _tail_text(path).splitlines():
+            match = LOG_ENTRY_PATTERN.match(line)
+            if not match:
+                continue
+            entry = match.groupdict()
+            message = re.sub(
+                r"((?:[?&]|\b)(?:y|api_key|key|token)=)[^&\s]+",
+                r"\1[REDACTED]",
+                entry["message"],
+                flags=re.IGNORECASE,
+            )
+            for secret in secrets:
+                message = message.replace(secret, "[REDACTED]")
+            entry["message"] = message
+            entries.append(entry)
+    return entries[-max(1, min(100, limit)):][::-1]
+
+
 def schedule_weekly_refresh_if_needed(users: list[dict], weekly_cache: dict, week_start: datetime, week_end: datetime):
     global weekly_refresh_task
 
@@ -679,10 +755,10 @@ async def refresh_weekly_rankings(users: list[dict], week_start: datetime, week_
         db.save_weekly_rankings(rankings, week_start.isoformat())
 
 
-def schedule_user_snapshot_refresh_if_needed(users: list[dict], profile_cache: dict, currently_playing_cache: dict):
+def schedule_user_snapshot_refresh_if_needed(users: list[dict], profile_cache: dict):
     global user_snapshot_refresh_task
 
-    if not user_snapshot_cache_needs_refresh(users, profile_cache, currently_playing_cache):
+    if not user_snapshot_cache_needs_refresh(users, profile_cache):
         return
 
     if user_snapshot_refresh_task and not user_snapshot_refresh_task.done():
@@ -691,14 +767,11 @@ def schedule_user_snapshot_refresh_if_needed(users: list[dict], profile_cache: d
     user_snapshot_refresh_task = asyncio.create_task(refresh_user_snapshots(users))
 
 
-def user_snapshot_cache_needs_refresh(users: list[dict], profile_cache: dict, currently_playing_cache: dict) -> bool:
+def user_snapshot_cache_needs_refresh(users: list[dict], profile_cache: dict) -> bool:
     for user in users:
         key = user["ra_username"].lower()
         profile = profile_cache.get(key)
-        current = currently_playing_cache.get(key)
         if not profile or cache_is_stale(profile.get("refreshed_at"), PROFILE_CACHE_TTL):
-            return True
-        if not current or cache_is_stale(current.get("refreshed_at"), CURRENTLY_PLAYING_CACHE_TTL):
             return True
     return False
 
@@ -710,16 +783,53 @@ async def refresh_user_snapshots(users: list[dict]):
         try:
             profile = await ra_client.lookup_user(profile_target)
             db.save_user_profile(username, profile)
-            current_target = profile.get("username", username)
-        except (aiohttp.ClientError, ValueError):
-            current_target = username
+        except (aiohttp.ClientError, ValueError) as exc:
+            logger.warning("Could not refresh profile for %s: %s", username, exc)
+            continue
+
+
+def visible_current_activity(cached: dict) -> dict | None:
+    """Keep a recent active snapshot visible while its replacement is fetched."""
+    if not cached.get("active") or not cached.get("payload"):
+        return None
+    if cache_is_stale(cached.get("refreshed_at"), CURRENTLY_PLAYING_STALE_MAX):
+        return None
+    return cached["payload"]
+
+
+async def refresh_current_activity_for_user(user: dict) -> bool:
+    username = user["ra_username"]
+    old_cache = db.get_currently_playing_cache().get(username.lower(), {})
+
+    try:
+        currently_playing = await ra_client.currently_playing(username)
+    except (aiohttp.ClientError, ValueError) as exc:
+        # Preserve the last known state through a transient API failure.
+        logger.warning("Could not refresh current activity for %s: %s", username, exc)
+        return False
+
+    changed = bool(old_cache.get("active")) != bool(currently_playing) or old_cache.get("payload") != currently_playing
+    db.save_currently_playing(username, currently_playing)
+    if changed:
+        broadcast_display_event({"type": "display-data-refresh", "reason": "current-activity"})
+    return changed
+
+
+async def current_activity_poll_loop():
+    """Refresh one user per slot so every player is checked within the cache TTL."""
+    user_index = 0
+    while True:
+        users = db.get_tracked_users()
+        if not users:
+            await asyncio.sleep(CURRENTLY_PLAYING_CACHE_TTL.total_seconds())
+            continue
 
         try:
-            currently_playing = await ra_client.currently_playing(current_target)
-        except (aiohttp.ClientError, ValueError):
-            currently_playing = None
-
-        db.save_currently_playing(username, currently_playing)
+            await refresh_current_activity_for_user(users[user_index % len(users)])
+        except Exception as exc:
+            logger.warning("Current activity refresh failed: %s", exc)
+        user_index = (user_index + 1) % len(users)
+        await asyncio.sleep(CURRENTLY_PLAYING_CACHE_TTL.total_seconds() / len(users))
 
 
 def schedule_recent_activity_refresh_if_needed(users: list[dict], recent_activity: list[dict]):
@@ -907,8 +1017,8 @@ async def achievement_poll_loop():
         started_at = asyncio.get_running_loop().time()
         try:
             await poll_for_new_achievements()
-        except Exception as exc:
-            print(f"Achievement poll failed: {exc}")
+        except Exception:
+            logger.exception("Achievement polling failed")
         user_count = db.tracked_user_count()
         if not user_count:
             await asyncio.sleep(POLL_CYCLE_SECONDS)
@@ -1446,15 +1556,16 @@ async def install_application_update(request: Request):
 
 @app.on_event("startup")
 async def start_background_polling():
-    global achievement_poll_task
+    global achievement_poll_task, current_activity_poll_task
     display_shutdown_event.clear()
     application_updater.start()
     if not db.setup_complete():
         return
     schedule_history_backfill()
-    if achievement_poll_task and not achievement_poll_task.done():
-        return
-    achievement_poll_task = asyncio.create_task(achievement_poll_loop())
+    if not achievement_poll_task or achievement_poll_task.done():
+        achievement_poll_task = asyncio.create_task(achievement_poll_loop())
+    if not current_activity_poll_task or current_activity_poll_task.done():
+        current_activity_poll_task = asyncio.create_task(current_activity_poll_loop())
 
 
 @app.on_event("shutdown")
@@ -1465,6 +1576,7 @@ async def stop_update_polling():
         weekly_refresh_task,
         history_backfill_task,
         user_snapshot_refresh_task,
+        current_activity_poll_task,
         recent_activity_refresh_task,
         achievement_poll_task,
     ]
@@ -1495,15 +1607,12 @@ async def dashboard_context():
         weekly_retro_points = cached_weekly.get("retro_points", 0)
         currently_playing = None
 
-        if (
-            cached_current.get("active")
-            and cached_current.get("payload")
-            and not cache_is_stale(cached_current.get("refreshed_at"), CURRENTLY_PLAYING_CACHE_TTL)
-        ):
+        current_payload = visible_current_activity(cached_current)
+        if current_payload:
             currently_playing = {
-                **cached_current["payload"],
-                "hardcore_points_display": format_points(cached_current["payload"].get("hardcore_points", 0)),
-                "total_points_display": format_points(cached_current["payload"].get("total_points", 0)),
+                **current_payload,
+                "hardcore_points_display": format_points(current_payload.get("hardcore_points", 0)),
+                "total_points_display": format_points(current_payload.get("total_points", 0)),
             }
 
         return {
@@ -1525,7 +1634,7 @@ async def dashboard_context():
     recent_activity = prepare_recent_activity(db.get_recent_activity(limit=RECENT_ACTIVITY_LIMIT))
     enriched = [enrich(u) for u in users]
 
-    schedule_user_snapshot_refresh_if_needed(users, profile_cache, currently_playing_cache)
+    schedule_user_snapshot_refresh_if_needed(users, profile_cache)
     schedule_weekly_refresh_if_needed(users, weekly_cache, week_start, week_end)
     schedule_recent_activity_refresh_if_needed(users, recent_activity)
 
@@ -1571,6 +1680,8 @@ async def admin(request: Request, message: str = None):
             "update_status": await application_updater.status(),
             "macos_notification_status": macos_notification_status,
             "update_js_version": static_asset_version(str(runtime.resource_path("static", "js", "update.js"))),
+            "recent_errors": recent_application_errors(),
+            "application_log_name": APPLICATION_LOG_PATH.name,
         },
     )
 

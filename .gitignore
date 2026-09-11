@@ -8,4 +8,5 @@ database/*.db
 .update-status
 build/
 dist/
+logs/
 *.spec.bak

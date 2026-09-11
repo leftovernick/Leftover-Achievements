@@ -487,6 +487,7 @@
       try {
         notificationQueue.push(JSON.parse(message.data));
         showNextNotification();
+        requestDisplayDataRefresh();
       } catch (error) {
         console.error('Could not parse display event', error);
       }
@@ -502,6 +503,7 @@
         console.info('Could not apply display scale', error);
       }
     });
+    events.addEventListener('display-data-refresh', requestDisplayDataRefresh);
     events.addEventListener('display-refresh', () => window.location.reload());
   };
 
@@ -659,6 +661,15 @@
     } else {
       rotationPaused = true;
     }
+  };
+
+  let displayDataRefreshPromise = null;
+  const requestDisplayDataRefresh = () => {
+    if (displayDataRefreshPromise) return displayDataRefreshPromise;
+    displayDataRefreshPromise = refreshDisplaySlides()
+      .catch((error) => console.info('Could not apply live display data', error))
+      .finally(() => { displayDataRefreshPromise = null; });
+    return displayDataRefreshPromise;
   };
 
   const showPanel = (panel) => {
