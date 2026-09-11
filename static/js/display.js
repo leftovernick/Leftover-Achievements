@@ -504,6 +504,14 @@
       }
     });
     events.addEventListener('display-data-refresh', requestDisplayDataRefresh);
+    events.addEventListener('display-update-state', (message) => {
+      try {
+        const payload = JSON.parse(message.data);
+        renderUpdateState(payload.state || payload);
+      } catch (error) {
+        console.info('Could not apply display update state', error);
+      }
+    });
     events.addEventListener('display-refresh', () => window.location.reload());
   };
 
@@ -830,22 +838,26 @@
     document.addEventListener('keydown', enableDisplayAudio, { once: true });
   }
 
+  const DISPLAY_DATA_REFRESH_MS = 30 * 1000;
+  const DISPLAY_MAINTENANCE_RELOAD_MS = 15 * 60 * 1000;
+
   const refreshWhenIdle = async () => {
     if (document.visibilityState !== 'visible' || notificationActive || notificationQueue.length > 0 || openPanel) {
-      window.setTimeout(refreshWhenIdle, 60 * 1000);
+      window.setTimeout(refreshWhenIdle, 10 * 1000);
       return;
     }
-    if (autoReloadEnabled) {
-      window.location.reload();
-      return;
-    }
-    try {
-      await refreshDisplaySlides();
-      window.setTimeout(refreshWhenIdle, 15 * 60 * 1000);
-    } catch (error) {
-      console.info('Could not refresh display data', error);
-      window.setTimeout(refreshWhenIdle, 60 * 1000);
-    }
+    await requestDisplayDataRefresh();
+    window.setTimeout(refreshWhenIdle, DISPLAY_DATA_REFRESH_MS);
   };
-  window.setTimeout(refreshWhenIdle, 15 * 60 * 1000);
+  window.setTimeout(refreshWhenIdle, 10 * 1000);
+
+  const reloadWhenIdle = () => {
+    if (!autoReloadEnabled) return;
+    if (document.visibilityState !== 'visible' || notificationActive || notificationQueue.length > 0 || openPanel) {
+      window.setTimeout(reloadWhenIdle, 60 * 1000);
+      return;
+    }
+    window.location.reload();
+  };
+  if (autoReloadEnabled) window.setTimeout(reloadWhenIdle, DISPLAY_MAINTENANCE_RELOAD_MS);
 })();

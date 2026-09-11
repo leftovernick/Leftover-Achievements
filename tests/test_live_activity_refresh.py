@@ -92,6 +92,11 @@ class LiveActivityRefreshTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("requestDisplayDataRefresh();", display_javascript)
         self.assertIn("'display-data-refresh'", display_javascript)
+        self.assertIn("DISPLAY_DATA_REFRESH_MS = 30 * 1000", display_javascript)
+        self.assertIn(
+            "DISPLAY_MAINTENANCE_RELOAD_MS = 15 * 60 * 1000",
+            display_javascript,
+        )
         self.assertIn("REFRESH_INTERVAL_MS = 10 * 1000", dashboard_javascript)
         self.assertEqual(
             dashboard_template.count("data-dashboard-refresh-section="), 2

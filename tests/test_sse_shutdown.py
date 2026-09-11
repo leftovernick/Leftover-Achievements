@@ -92,6 +92,25 @@ class DisplayEventShutdownTests(unittest.IsolatedAsyncioTestCase):
         event = queue.get_nowait()
         self.assertEqual(event, {"type": "display-refresh", "reason": "settings"})
 
+    async def test_dashboard_update_start_reaches_connected_display(self):
+        queue = asyncio.Queue()
+        application.display_event_queues.add(queue)
+        state = {"installing": True, "install_phase": "preparing"}
+        request = SimpleNamespace(headers={}, base_url="http://test/")
+
+        with patch.object(
+            application.application_updater,
+            "install",
+            new=AsyncMock(return_value=state),
+        ):
+            response = await application.install_application_update(request)
+
+        self.assertEqual(response, state)
+        self.assertEqual(
+            queue.get_nowait(),
+            {"type": "display-update-state", "state": state},
+        )
+
     async def test_saving_settings_requests_immediate_display_refresh(self):
         with (
             patch.object(application.db, "set_audio_enabled"),
@@ -111,6 +130,14 @@ class DisplayEventShutdownTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("addEventListener('display-refresh'", display_javascript)
         self.assertIn("window.location.reload()", display_javascript)
+
+    async def test_display_javascript_renders_live_update_state(self):
+        display_javascript = (
+            PROJECT_ROOT / "static/js/display.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("addEventListener('display-update-state'", display_javascript)
+        self.assertIn("renderUpdateState(payload.state || payload)", display_javascript)
 
     async def test_server_signals_streams_before_uvicorn_shutdown_wait(self):
         response = await application.display_events()

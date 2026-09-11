@@ -46,7 +46,10 @@ macos_notification_service = MacOSNotificationService(runtime, db)
 
 
 async def notify_about_update(state: dict):
-    await macos_notification_service.notify_update(state)
+    try:
+        await macos_notification_service.notify_update(state)
+    finally:
+        broadcast_display_update_state(state)
 
 
 application_updater = ApplicationUpdater(
@@ -1128,6 +1131,11 @@ def broadcast_display_event(event: dict) -> None:
         queue.put_nowait(event)
 
 
+def broadcast_display_update_state(state: dict) -> None:
+    """Keep every connected display in sync with updater state changes."""
+    broadcast_display_event({"type": "display-update-state", "state": state})
+
+
 def request_display_refresh(reason: str = "settings") -> None:
     """Tell connected displays to reload configuration from the backend."""
     broadcast_display_event({"type": "display-refresh", "reason": reason})
@@ -1549,7 +1557,9 @@ async def install_application_update(request: Request):
     if request.headers.get("sec-fetch-site") == "cross-site":
         raise HTTPException(status_code=403, detail="Cross-site update requests are not allowed.")
     try:
-        return await application_updater.install()
+        state = await application_updater.install()
+        broadcast_display_update_state(state)
+        return state
     except UpdateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
