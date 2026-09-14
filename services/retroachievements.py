@@ -90,6 +90,7 @@ class RetroAchievements:
             "avatar": avatar,
             "hardcore_points": int(data.get("TotalPoints") or data.get("totalPoints") or 0),
             "retro_points": int(data.get("TotalTruePoints") or data.get("totalTruePoints") or 0),
+            "member_since": data.get("MemberSince") or data.get("memberSince"),
         }
 
     async def validate_api_key(self) -> bool:

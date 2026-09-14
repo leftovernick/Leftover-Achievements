@@ -41,6 +41,31 @@ After setup, the main pages are:
 - Dashboard: http://127.0.0.1:8000/
 - Admin: http://127.0.0.1:8000/admin
 - Display: http://127.0.0.1:8000/display
+- History: http://127.0.0.1:8000/history
+- Charts: http://127.0.0.1:8000/charts
+
+### Full account history and charts
+
+Charts → **All Time** shows every tracked player on one cumulative score timeline,
+from the oldest account’s creation through the latest refresh. Toggle between
+Hardcore Points and RetroPoints without another data request. Later accounts start
+at zero when they joined, on the same date and score axes.
+
+A shared background job fetches account history in rate-limited monthly chunks and
+saves daily Hardcore unlock totals in SQLite. These same records fill **every
+completed week** in History, not just the initial four-week window. Existing weekly
+snapshots are preserved. Cached chunks survive reloads, backend restarts, and Pi
+reboots; failures leave gaps marked incomplete and retry resumes saved progress.
+The first fill can take several minutes for older accounts. Progress is shown in
+All Time and Settings → History Data; **Refresh / Retry** updates profiles and the
+current month without re-fetching completed months. Normal refreshes are hourly.
+
+These curves are reconstructed from available unlocks and their current point
+values, not historical score snapshots. Deleted unlocks and past point/RetroPoints
+adjustments cannot be reconstructed exactly. The final point uses the reported
+account total as of its last refresh. Game-award counts remain explicitly partial.
+Account dates come from the [official Profile API](https://api-docs.retroachievements.org/v1/get-user-profile.html)
+and dated unlocks from the [date-range API](https://api-docs.retroachievements.org/v1/get-achievements-earned-between.html).
 
 ## Notes
 

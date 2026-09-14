@@ -129,6 +129,12 @@
                     <span>{{ entry.source }}</span>
                   </div>
                   <p>{{ entry.message }}</p>
+                  {% if entry.details %}
+                    <details class="application-error-details">
+                      <summary>Show error details</summary>
+                      <pre>{{ entry.details }}</pre>
+                    </details>
+                  {% endif %}
                 </li>
               {% endfor %}
             </ol>
@@ -262,7 +268,7 @@
         </div>
         <div class="history-maintenance" data-history-maintenance>
           <div class="history-maintenance-copy">
-            <p>Audit every stored completed week, restore gaps caused by downtime, add current users to older snapshots, and refresh the current LIVE week. Existing completed rows are skipped.</p>
+            <p>Fill every completed week back to each player’s account creation using the shared All Time chart cache, restore missing rows, and refresh the current LIVE week. Existing completed snapshots are preserved.</p>
             <div class="history-maintenance-actions">
               <button type="button" data-history-check>Check &amp; Fill Missing Data</button>
               <a href="/history">View History</a>

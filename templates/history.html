@@ -30,7 +30,7 @@
       </section>
 
       {% if backfill_pending %}
-        <div class="message history-notice">Historical data is still filling in. Stored results are shown below; refresh shortly for the remaining users.</div>
+        <div class="message history-notice">Full account history is filling in, back to each player’s account creation. Stored results are shown below; refresh for newly completed weeks. Progress is available in Charts → All Time or Settings.</div>
       {% endif %}
 
       <div class="history-browser">
@@ -72,8 +72,8 @@
             </article>
             <article class="panel summary-card summary-card-muted">
               <span>Games Beaten / Mastered</span>
-              <strong>— / —</strong>
-              <small>Not reliably reconstructable</small>
+              <strong>{{ summary.beaten_display }} / {{ summary.masteries_display }}</strong>
+              <small>Recorded awards · totals may be incomplete</small>
             </article>
           </section>
 
@@ -109,7 +109,7 @@
             </div>
           </section>
 
-          <p class="history-limitation">Historical beaten and mastery totals are left unavailable because the official date-range achievement API does not expose when those game-award transitions occurred. The page does not estimate them from unlocks.</p>
+          <p class="history-limitation">Beaten and mastery totals count saved game-award records and may be incomplete; they are not estimated from unlocks. Backfilled scores use available Hardcore unlocks and current point values, so past score adjustments may not be reconstructable.</p>
         </div>
       </div>
     </main>

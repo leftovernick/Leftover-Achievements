@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+from contextlib import closing
 from datetime import datetime, timezone
 
 from runtime import runtime
@@ -205,6 +206,26 @@ def init_db():
         )
         """
     )
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS all_time_chart_profiles (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            payload_json TEXT NOT NULL,
+            refreshed_at TEXT NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS all_time_chart_months (
+            user_key TEXT NOT NULL COLLATE NOCASE,
+            month_start TEXT NOT NULL,
+            hardcore_points INTEGER NOT NULL,
+            retro_points INTEGER NOT NULL,
+            covered_through TEXT NOT NULL,
+            daily_json TEXT,
+            PRIMARY KEY (user_key, month_start)
+        )
+    """)
+    if "daily_json" not in {row[1] for row in cur.execute("PRAGMA table_info(all_time_chart_months)")}:
+        cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN daily_json TEXT")
     cur.execute(
         """
         INSERT OR IGNORE INTO app_settings (key, value, updated_at)
@@ -609,6 +630,98 @@ def get_history_rankings(week_start: str):
             (week_start,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def get_recorded_history_award_counts(start: datetime, end: datetime, usernames: list[str]) -> dict:
+    """Count saved awards by earned time; end is exclusive and totals may be partial."""
+    counts = {"beaten": 0, "masteries": 0}
+    if not usernames:
+        return counts
+    placeholders = ",".join("?" for _ in usernames)
+    with get_conn() as conn:
+        for kind, table in (
+            ("beaten", "processed_beaten_game_events"),
+            ("masteries", "processed_mastery_events"),
+        ):
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS count FROM (
+                    SELECT DISTINCT ra_username COLLATE NOCASE, game_id
+                    FROM {table}
+                    WHERE julianday(awarded_at) >= julianday(?)
+                      AND julianday(awarded_at) < julianday(?)
+                      AND ra_username COLLATE NOCASE IN ({placeholders})
+                )
+                """,
+                [start.isoformat(), end.isoformat(), *usernames],
+            ).fetchone()
+            counts[kind] = row["count"]
+    return counts
+
+
+def get_all_time_chart_cache() -> tuple[dict, dict]:
+    with closing(get_conn()) as conn:
+        profiles = {
+            row["ra_username"].lower(): {"profile": json.loads(row["payload_json"]), "refreshed_at": row["refreshed_at"]}
+            for row in conn.execute("SELECT * FROM all_time_chart_profiles")
+        }
+        months = {}
+        for row in conn.execute("SELECT * FROM all_time_chart_months ORDER BY month_start"):
+            month = dict(row)
+            month["days"] = json.loads(month["daily_json"]) if month["daily_json"] is not None else None
+            months.setdefault(row["user_key"].lower(), {})[row["month_start"]] = month
+    return profiles, months
+
+
+def get_history_user_weeks(user_key: str) -> set[str]:
+    with closing(get_conn()) as conn:
+        return {row[0] for row in conn.execute(
+            "SELECT week_start FROM weekly_history_rankings WHERE user_key = ?", (user_key,)
+        )}
+
+
+def save_completed_history_snapshots(snapshots: list[dict]):
+    """Insert reconstructed weeks in one transaction without replacing snapshots."""
+    created = datetime.now(timezone.utc).isoformat()
+    with closing(get_conn()) as conn:
+        conn.executemany("INSERT OR IGNORE INTO weekly_history_weeks VALUES (?, ?, ?)", [
+            (row["week_start"], row["week_end"], created) for row in snapshots
+        ])
+        conn.executemany("""
+            INSERT OR IGNORE INTO weekly_history_rankings (
+                week_start, user_key, ra_username, canonical_username, ra_ulid, avatar,
+                hardcore_points, retro_points, achievements_earned, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [(
+            row["week_start"], row["user_key"], row["ra_username"], row["canonical_username"],
+            row.get("ra_ulid"), row.get("avatar"), row["hardcore_points"], row["retro_points"],
+            row["achievements_earned"], created,
+        ) for row in snapshots])
+        conn.commit()
+
+
+def save_all_time_chart_profile(username: str, profile: dict, refreshed_at: datetime):
+    with closing(get_conn()) as conn:
+        conn.execute("""
+            INSERT INTO all_time_chart_profiles VALUES (?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                payload_json = excluded.payload_json, refreshed_at = excluded.refreshed_at
+        """, (username, json.dumps(profile), refreshed_at.isoformat()))
+        conn.commit()
+
+
+def save_all_time_chart_month(user_key: str, month_start: str, points: dict, covered_through: datetime, days: dict):
+    with closing(get_conn()) as conn:
+        conn.execute("""
+            INSERT INTO all_time_chart_months (user_key, month_start, hardcore_points, retro_points, covered_through, daily_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_key, month_start) DO UPDATE SET
+                hardcore_points = excluded.hardcore_points,
+                retro_points = excluded.retro_points,
+                covered_through = excluded.covered_through,
+                daily_json = excluded.daily_json
+        """, (user_key, month_start, points["hardcore_points"], points["retro_points"], covered_through.isoformat(), json.dumps(days)))
+        conn.commit()
 
 
 def get_weekly_chart_history(limit: int = 8):

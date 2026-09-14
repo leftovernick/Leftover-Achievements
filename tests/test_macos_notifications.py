@@ -96,12 +96,14 @@ class MacOSNotificationTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("database unavailable")
 
         settings.get_setting = fail_setting
-        delivered = await service.notify_event(
-            {"type": "beaten", "dedupe_key": "nick:1"}
-        )
+        with self.assertLogs("services.macos_notifications", level="WARNING") as captured:
+            delivered = await service.notify_event(
+                {"type": "beaten", "dedupe_key": "nick:1"}
+            )
 
         self.assertFalse(delivered)
         self.assertEqual(platform.sent, [])
+        self.assertIn("database unavailable", captured.output[0])
 
     async def test_achievement_uses_existing_identity_and_sends_once(self):
         service, settings, platform = self.make_service()

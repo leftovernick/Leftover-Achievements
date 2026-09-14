@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import aiohttp
 import certifi
 from packaging.version import InvalidVersion, Version
+from .background_tasks import create_logged_task
 
 
 logger = logging.getLogger(__name__)
@@ -408,7 +409,7 @@ class ApplicationUpdater:
                 raise UpdateError(f"Could not start the update process: {exc}") from exc
 
             self._state.update(installing=True, install_phase="preparing", error=None)
-            asyncio.create_task(self._watch_install(self._install_process))
+            create_logged_task(self._watch_install(self._install_process), "update install watcher")
             return dict(self._state)
 
     async def _watch_install(self, process: subprocess.Popen) -> None:
@@ -455,7 +456,7 @@ class ApplicationUpdater:
 
     def start(self) -> None:
         if not self._background_task or self._background_task.done():
-            self._background_task = asyncio.create_task(self.background_loop())
+            self._background_task = create_logged_task(self.background_loop(), "update checks")
 
     async def stop(self) -> None:
         if not self._background_task:

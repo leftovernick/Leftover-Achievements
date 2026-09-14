@@ -25,6 +25,8 @@ if not runtime.is_packaged:
     load_dotenv(runtime.resource_path(".env"))
 
 from database import database as db
+from services.background_tasks import create_logged_task
+from services.all_time_charts import AllTimeCharts
 from services.macos_notifications import MacOSNotificationService
 from services.retroachievements import RetroAchievements
 from services.updater import ApplicationUpdater, UpdateError
@@ -42,6 +44,7 @@ templates = Jinja2Templates(directory=str(runtime.resource_path("templates")))
 db.init_db()
 legacy_environment_api_key = None if runtime.is_packaged else os.getenv("RA_API_KEY")
 ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or legacy_environment_api_key)
+all_time_charts = AllTimeCharts(ra_client, db)
 macos_notification_service = MacOSNotificationService(runtime, db)
 
 
@@ -349,10 +352,17 @@ async def backfill_history_user(user: dict, ranges: list[tuple[datetime, datetim
             logger.warning("Could not refresh RetroAchievements profile for history user %s: %s", username, exc)
             profile = {}
 
+    chart_cache = db.get_all_time_chart_cache()
     for start, end in ranges:
         history_backfill_status["current"] = f"{username} · {readable_week_range(start.date().isoformat(), end.date().isoformat())}"
         try:
-            stats = await ra_client.points_earned_between(user.get("ra_ulid") or username, start, end)
+            stats = all_time_charts.cached_week_stats(username, start, end, chart_cache)
+            if stats is None:
+                # The shared monthly job owns historical fetching. Do not start a
+                # second lifetime scan with weekly requests while it fills gaps.
+                history_backfill_status["deferred"] += 1
+                history_backfill_status["processed"] += 1
+                continue
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             logger.warning(
                 "Could not backfill history for %s during %s through %s: %s",
@@ -386,7 +396,7 @@ async def backfill_history_user(user: dict, ranges: list[tuple[datetime, datetim
 
 
 async def ensure_history_backfill():
-    """Ensure four completed week containers and all currently tracked user rows exist."""
+    """Audit stored completed weeks while the shared lifetime backfill extends coverage."""
     global history_refresh_live_requested
     started_at = datetime.now(timezone.utc).isoformat()
     history_backfill_status.update(
@@ -398,6 +408,7 @@ async def ensure_history_backfill():
             "processed": 0,
             "fetched": 0,
             "failed": 0,
+            "deferred": 0,
             "live_users": 0,
             "live_processed": 0,
             "live_failed": 0,
@@ -429,10 +440,11 @@ async def ensure_history_backfill():
     missing_by_user = []
     for user in users:
         user_key = history_user_key(user)
+        existing_weeks = db.get_history_user_weeks(user_key)
         missing_ranges = [
             (start, end)
             for start, end in ranges
-            if not db.history_user_exists(start.date().isoformat(), user_key)
+            if start.date().isoformat() not in existing_weeks
         ]
         missing_by_user.append((user, missing_ranges))
 
@@ -497,13 +509,15 @@ async def ensure_history_backfill():
     live_refreshed = history_backfill_status["live_processed"] - history_backfill_status["live_failed"]
     if failed:
         completion_message = f"Finished with {failed} failed request{'s' if failed != 1 else ''}. Run the check again to retry."
+    elif history_backfill_status["deferred"]:
+        completion_message = f"Added {added} completed rows; {history_backfill_status['deferred']} rows are awaiting the shared full account-history cache."
     elif history_backfill_status["live_users"]:
         completion_message = f"History is complete. Added {added} completed rows and refreshed {live_refreshed} live user{'s' if live_refreshed != 1 else ''}."
     else:
         completion_message = f"History is complete. Added {added} missing completed user/week rows."
     history_backfill_status.update(
         {
-            "state": "complete_with_errors" if failed else "complete",
+            "state": "complete_with_errors" if failed or history_backfill_status["deferred"] else "complete",
             "current": None,
             "message": completion_message,
             "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -514,6 +528,8 @@ async def ensure_history_backfill():
 
 def schedule_history_backfill(refresh_live: bool = False) -> asyncio.Task:
     global history_backfill_task, history_refresh_live_requested
+    if ra_client.api_key:
+        all_time_charts.schedule(db.get_tracked_users(), force=refresh_live)
     if refresh_live:
         history_refresh_live_requested = True
     if history_backfill_task is None or history_backfill_task.done():
@@ -524,7 +540,7 @@ def schedule_history_backfill(refresh_live: bool = False) -> asyncio.Task:
                 "message": "History check queued…",
             }
         )
-        history_backfill_task = asyncio.create_task(ensure_history_backfill())
+        history_backfill_task = create_logged_task(ensure_history_backfill(), "history backfill")
     return history_backfill_task
 
 
@@ -541,6 +557,17 @@ def history_backfill_status_payload() -> dict:
         payload["percent"] = 100
     else:
         payload["percent"] = 0
+    lifetime = all_time_charts.payload(db.get_tracked_users())
+    if lifetime["building"]:
+        progress = lifetime["progress"]
+        payload.update(
+            state="running", current=progress["current"],
+            percent=round(100 * progress["completed"] / progress["total"]) if progress["total"] else 0,
+            message=f"Filling full account history: {progress['completed']} / {progress['total']} monthly ranges saved. Completed weeks are populated from the same data.",
+        )
+    elif all_time_charts.errors:
+        payload.update(state="complete_with_errors", message="Full account history is incomplete. Saved progress will resume on retry.")
+    payload["lifetime"] = {key: lifetime[key] for key in ("building", "progress", "ready_users", "needs_refresh")}
     return payload
 
 
@@ -693,24 +720,37 @@ def recent_application_errors(limit: int = 30, log_path: Path | None = None) -> 
     paths = [Path(f"{base_path}.{index}") for index in range(3, 0, -1)] + [base_path]
     entries = []
     api_key = db.get_setting("ra_api_key")
-    secrets = [api_key] if api_key else []
+    secrets = [secret for secret in (api_key, legacy_environment_api_key) if secret]
+
+    def redact(message):
+        message = re.sub(
+            r"((?:[?&]|\b)(?:y|api_key|key|token|password)=)[^&\s]+",
+            r"\1[REDACTED]", message, flags=re.IGNORECASE,
+        )
+        message = re.sub(r"(Bearer\s+)\S+", r"\1[REDACTED]", message, flags=re.IGNORECASE)
+        message = re.sub(
+            r"([\"'](?:api_key|key|token|password|authorization)[\"']\s*:\s*)([\"'])(.*?)\2",
+            r"\1\2[REDACTED]\2", message, flags=re.IGNORECASE,
+        )
+        for secret in secrets:
+            message = message.replace(secret, "[REDACTED]")
+        return message
 
     for path in paths:
+        current = None
         for line in _tail_text(path).splitlines():
             match = LOG_ENTRY_PATTERN.match(line)
-            if not match:
-                continue
-            entry = match.groupdict()
-            message = re.sub(
-                r"((?:[?&]|\b)(?:y|api_key|key|token)=)[^&\s]+",
-                r"\1[REDACTED]",
-                entry["message"],
-                flags=re.IGNORECASE,
-            )
-            for secret in secrets:
-                message = message.replace(secret, "[REDACTED]")
-            entry["message"] = message
-            entries.append(entry)
+            if match:
+                current = match.groupdict()
+                current["message"] = redact(current["message"])
+                current["details"] = []
+                entries.append(current)
+            elif re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)? [A-Z]+ ", line):
+                current = None  # INFO/debug records are not traceback continuations.
+            elif current is not None:
+                current["details"].append(redact(line))
+    for entry in entries:
+        entry["details"] = "\n".join(entry["details"]).strip()
     return entries[-max(1, min(100, limit)):][::-1]
 
 
@@ -723,7 +763,7 @@ def schedule_weekly_refresh_if_needed(users: list[dict], weekly_cache: dict, wee
     if weekly_refresh_task and not weekly_refresh_task.done():
         return
 
-    weekly_refresh_task = asyncio.create_task(refresh_weekly_rankings(users, week_start, week_end))
+    weekly_refresh_task = create_logged_task(refresh_weekly_rankings(users, week_start, week_end), "weekly rankings refresh")
 
 
 def weekly_cache_needs_refresh(users: list[dict], weekly_cache: dict) -> bool:
@@ -744,7 +784,8 @@ async def refresh_weekly_rankings(users: list[dict], week_start: datetime, week_
         username = user["ra_username"]
         try:
             points = await ra_client.points_earned_between(username, week_start, week_end)
-        except (aiohttp.ClientError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning("Could not refresh weekly rankings for %s: %s: %s", username, type(exc).__name__, exc)
             continue
         rankings.append(
             {
@@ -767,7 +808,7 @@ def schedule_user_snapshot_refresh_if_needed(users: list[dict], profile_cache: d
     if user_snapshot_refresh_task and not user_snapshot_refresh_task.done():
         return
 
-    user_snapshot_refresh_task = asyncio.create_task(refresh_user_snapshots(users))
+    user_snapshot_refresh_task = create_logged_task(refresh_user_snapshots(users), "user profile refresh")
 
 
 def user_snapshot_cache_needs_refresh(users: list[dict], profile_cache: dict) -> bool:
@@ -786,8 +827,8 @@ async def refresh_user_snapshots(users: list[dict]):
         try:
             profile = await ra_client.lookup_user(profile_target)
             db.save_user_profile(username, profile)
-        except (aiohttp.ClientError, ValueError) as exc:
-            logger.warning("Could not refresh profile for %s: %s", username, exc)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning("Could not refresh profile for %s: %s: %s", username, type(exc).__name__, exc)
             continue
 
 
@@ -806,9 +847,9 @@ async def refresh_current_activity_for_user(user: dict) -> bool:
 
     try:
         currently_playing = await ra_client.currently_playing(username)
-    except (aiohttp.ClientError, ValueError) as exc:
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
         # Preserve the last known state through a transient API failure.
-        logger.warning("Could not refresh current activity for %s: %s", username, exc)
+        logger.warning("Could not refresh current activity for %s: %s: %s", username, type(exc).__name__, exc)
         return False
 
     changed = bool(old_cache.get("active")) != bool(currently_playing) or old_cache.get("payload") != currently_playing
@@ -844,7 +885,7 @@ def schedule_recent_activity_refresh_if_needed(users: list[dict], recent_activit
     if recent_activity_refresh_task and not recent_activity_refresh_task.done():
         return
 
-    recent_activity_refresh_task = asyncio.create_task(refresh_recent_activity(users))
+    recent_activity_refresh_task = create_logged_task(refresh_recent_activity(users), "recent activity refresh")
 
 
 async def refresh_recent_activity(users: list[dict]):
@@ -868,7 +909,8 @@ async def recent_activity_for_user(u, recent_minutes: int):
     target = u["ra_username"] if isinstance(u, dict) else str(u)
     try:
         return await ra_client.recent_hardcore_achievements(target, recent_minutes=recent_minutes)
-    except (aiohttp.ClientError, ValueError):
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("Could not refresh recent activity for %s: %s: %s", target, type(exc).__name__, exc)
         return []
 
 
@@ -932,7 +974,7 @@ async def achievement_completion_ranges(username: str, activities: list[dict]) -
     for game_id, game_activities in activities_by_game.items():
         try:
             game_progress = await ra_client.game_info_and_user_progress(username, game_id)
-        except (aiohttp.ClientError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             continue
 
         achievements = game_progress.get("Achievements") or game_progress.get("achievements") or {}
@@ -1054,7 +1096,8 @@ async def poll_for_new_achievements():
 async def process_achievement_unlocks_for_user(username: str, recent_minutes: int = MIN_ACHIEVEMENT_POLL_LOOKBACK_MINUTES):
     try:
         activities = await fetch_recent_hardcore_achievements(username, recent_minutes)
-    except (aiohttp.ClientError, ValueError):
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("Could not poll achievements for %s: %s: %s", username, type(exc).__name__, exc)
         return
 
     activities = sorted(activities, key=lambda activity: activity["unlock_time"])
@@ -1081,7 +1124,8 @@ async def process_game_awards_for_user(username: str):
             username,
             fetch_all=not beaten_initialized or not mastery_initialized,
         )
-    except (aiohttp.ClientError, ValueError):
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("Could not poll game awards for %s: %s: %s", username, type(exc).__name__, exc)
         return
 
     beaten_games = sorted(awards["beaten"], key=lambda beaten_game: beaten_game["awarded_at"])
@@ -1112,7 +1156,7 @@ async def process_game_awards_for_user(username: str):
     for beaten_game in new_beaten_games:
         try:
             beaten_game = await ra_client.game_award_event_details(username, beaten_game)
-        except (aiohttp.ClientError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             pass
         db.save_processed_beaten_game_event(beaten_game, announced=True)
         await publish_display_event(serialize_beaten_game_event(beaten_game, profile))
@@ -1120,7 +1164,7 @@ async def process_game_awards_for_user(username: str):
     for mastery in new_masteries:
         try:
             mastery = await ra_client.mastery_event_details(username, mastery)
-        except (aiohttp.ClientError, ValueError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             pass
         db.save_processed_mastery_event(mastery, announced=True)
         await publish_display_event(serialize_mastery_event(mastery, profile))
@@ -1359,6 +1403,7 @@ async def history(request: Request, week: str | None = None):
         backfill_pending = True
     except Exception as exc:
         logger.exception("Historical backfill failed: %s", exc)
+    backfill_pending = backfill_pending or bool(all_time_charts.task and not all_time_charts.task.done())
 
     weeks = db.get_history_weeks(limit=HISTORY_WEEKS_PAGE_SIZE)
     selected_week = db.get_history_week(week) if week else (weeks[0] if weeks else None)
@@ -1383,9 +1428,18 @@ async def history(request: Request, week: str | None = None):
         "beaten": None,
         "masteries": None,
     }
+    if selected_week:
+        # Use the same local calendar weeks as the achievement history backfill.
+        start = datetime.fromisoformat(selected_week["week_start"]).astimezone()
+        end = (datetime.fromisoformat(selected_week["week_end"]) + timedelta(days=1)).astimezone()
+        summary.update(db.get_recorded_history_award_counts(
+            start, end, [item["ra_username"] for item in all_rankings]
+        ))
     summary["achievements_display"] = format_points(summary["achievements"])
     summary["hardcore_points_display"] = format_points(summary["hardcore_points"])
     summary["retro_points_display"] = format_points(summary["retro_points"])
+    summary["beaten_display"] = format_points(summary["beaten"]) if summary["beaten"] is not None else "—"
+    summary["masteries_display"] = format_points(summary["masteries"]) if summary["masteries"] is not None else "—"
 
     return templates.TemplateResponse(
         request=request,
@@ -1433,6 +1487,28 @@ async def charts(request: Request):
             "chart_js_version": static_asset_version(str(runtime.resource_path("static", "js", "charts.js"))),
         },
     )
+
+
+@app.get("/api/charts/all-time")
+async def all_time_chart_data():
+    try:
+        users = db.get_tracked_users()
+        if ra_client.api_key:
+            all_time_charts.schedule(users)
+        payload = all_time_charts.payload(users)
+        payload["configured"] = bool(ra_client.api_key)
+        return payload
+    except Exception as exc:
+        logger.exception("Could not build All Time chart response")
+        raise HTTPException(status_code=500, detail="Could not build All Time chart response; see Recent Errors in Settings.") from exc
+
+
+@app.post("/api/charts/all-time/refresh", status_code=202)
+async def refresh_all_time_chart_data():
+    users = db.get_tracked_users()
+    if ra_client.api_key:
+        all_time_charts.schedule(users, force=True)
+    return await all_time_chart_data()
 
 
 @app.get("/api/charts/weekly")
@@ -1573,14 +1649,15 @@ async def start_background_polling():
         return
     schedule_history_backfill()
     if not achievement_poll_task or achievement_poll_task.done():
-        achievement_poll_task = asyncio.create_task(achievement_poll_loop())
+        achievement_poll_task = create_logged_task(achievement_poll_loop(), "achievement polling")
     if not current_activity_poll_task or current_activity_poll_task.done():
-        current_activity_poll_task = asyncio.create_task(current_activity_poll_loop())
+        current_activity_poll_task = create_logged_task(current_activity_poll_loop(), "current activity polling")
 
 
 @app.on_event("shutdown")
 async def stop_update_polling():
     begin_application_shutdown()
+    await all_time_charts.stop()
     await application_updater.stop()
     background_tasks = [
         weekly_refresh_task,

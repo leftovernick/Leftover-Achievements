@@ -70,12 +70,14 @@ class LiveActivityRefreshTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=aiohttp.ClientError()),
             ),
             patch.object(application, "broadcast_display_event") as broadcast,
+            self.assertLogs("app", level="WARNING") as captured,
         ):
             changed = await application.refresh_current_activity_for_user(
                 {"ra_username": "Player"}
             )
 
         self.assertFalse(changed)
+        self.assertIn("Could not refresh current activity for Player", captured.output[0])
         save.assert_not_called()
         broadcast.assert_not_called()
 

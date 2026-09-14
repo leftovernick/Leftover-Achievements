@@ -405,6 +405,9 @@ table {
 .application-error-list li.error-level-warning strong { color: var(--accent-strong); }
 .application-error-list li p { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; line-height: 1.4; }
 .application-error-empty { margin: 0; padding: 18px; color: var(--muted); border: 1px dashed var(--border); text-align: center; }
+.application-error-details { margin-top: 8px; font-size: 0.76rem; }
+.application-error-details summary { cursor: pointer; color: var(--accent-strong); padding: 5px 0; }
+.application-error-details pre { margin: 6px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.72rem; line-height: 1.45; }
 .application-release-details { padding: 10px; border-left: 3px solid var(--points-blue); background: rgba(34, 153, 255, 0.06); }
 .application-release-details strong { display: block; margin-bottom: 4px; }
 .application-release-details p { margin: 0 0 7px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
@@ -702,6 +705,13 @@ input {
 .chart-empty span { display: block; }
 .chart-empty strong { margin-bottom: 5px; color: var(--text); }
 .chart-error { border-color: rgba(184, 92, 92, 0.48); background: rgba(184, 92, 92, 0.12); }
+.chart-all-time[hidden], .chart-all-time [hidden] { display: none; }
+.chart-all-time-header { flex-wrap: wrap; gap: 12px; }
+.chart-all-time .chart-canvas-wrap { height: 480px; }
+.chart-all-time-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
+.chart-all-time-status p, .chart-history-note { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.5; overflow-wrap: anywhere; }
+.chart-all-time-status button { flex-shrink: 0; padding: 8px 10px; }
+.chart-history-note { padding: 12px; border-top: 1px solid var(--border); }
 
 @media (max-width: 760px) {
   .application-version-grid { grid-template-columns: 1fr; }
@@ -713,6 +723,8 @@ input {
   .chart-range button { flex: 1; }
   .chart-canvas-wrap,
   .chart-panel-wide .chart-canvas-wrap { height: 320px; }
+  .chart-all-time .chart-canvas-wrap { height: 360px; }
+  .chart-all-time-status { align-items: flex-start; flex-direction: column; }
 }
 
 /* Raspberry Pi display surface ------------------------------------------- */

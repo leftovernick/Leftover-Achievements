@@ -36,6 +36,37 @@ class ErrorLogTests(unittest.TestCase):
         self.assertIn('id="recent-errors"', template)
         self.assertIn("recent_errors", template)
         self.assertIn(".application-error-list", css)
+        self.assertIn("Show error details", template)
+        self.assertIn("{{ entry.details }}", template)
+
+    def test_tracebacks_are_preserved_redacted_and_not_mixed_with_info(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "leftover-achievements.log"
+            log_path.write_text(
+                "2026-09-14 12:00:00,000 ERROR asyncio: Task exception was never retrieved\n"
+                "future: <Task name='weekly refresh'>\n"
+                "Traceback (most recent call last):\n"
+                "  request https://example.test/?y=url-secret&token=token-secret\n"
+                "  Authorization: Bearer bearer-secret\n"
+                "  payload: {'password': 'password-secret'}\n"
+                "TimeoutError: saved-secret env-secret\n"
+                "2026-09-14 12:01:00,000 INFO app: Started\n"
+                "not part of the traceback\n"
+                "2026-09-14 12:02:00,000 WARNING app: DNS failed\n",
+                encoding="utf-8",
+            )
+            with (
+                patch.object(application.db, "get_setting", return_value="saved-secret"),
+                patch.object(application, "legacy_environment_api_key", "env-secret"),
+            ):
+                entries = application.recent_application_errors(log_path=log_path)
+        self.assertEqual(entries[0]["details"], "")
+        details = entries[1]["details"]
+        self.assertIn("Traceback (most recent call last)", details)
+        self.assertIn("TimeoutError", details)
+        self.assertNotIn("not part of the traceback", details)
+        for secret in ("url-secret", "token-secret", "bearer-secret", "password-secret", "saved-secret", "env-secret"):
+            self.assertNotIn(secret, details)
 
 
 if __name__ == "__main__":
