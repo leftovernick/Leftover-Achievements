@@ -706,7 +706,14 @@ input {
 .chart-empty strong { margin-bottom: 5px; color: var(--text); }
 .chart-error { border-color: rgba(184, 92, 92, 0.48); background: rgba(184, 92, 92, 0.12); }
 .chart-all-time[hidden], .chart-all-time [hidden] { display: none; }
+.chart-all-time { margin-top: 12px; }
 .chart-all-time-header { flex-wrap: wrap; gap: 12px; }
+.chart-award-toggles { display: flex; flex-wrap: wrap; gap: 8px 20px; border: 0; margin: 0; padding: 8px 12px; }
+.chart-award-toggles legend { color: var(--muted); font-size: 0.78rem; }
+.chart-award-toggles label { display: flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; }
+.chart-award-toggles input { accent-color: #ffcf21; width: 18px; height: 18px; }
+.chart-award-key { width: 12px; height: 12px; border: 2px solid #f2f2f2; background: #202020; }
+.chart-award-key.mastery { border-color: #ffcf21; }
 .chart-all-time .chart-canvas-wrap { height: 480px; }
 .chart-all-time-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
 .chart-all-time-status p, .chart-history-note { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.5; overflow-wrap: anywhere; }

@@ -55,7 +55,52 @@ def daily_points(achievements, start, end):
         row["hardcore_points"] += int(achievement.get("Points") or achievement.get("points") or 0)
         row["retro_points"] += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
         row["achievements_earned"] += 1
+        points = int(achievement.get("Points") or achievement.get("points") or 0)
+        if points > 0 and (not row.get("first_achievement_at") or earned < parse_date(row["first_achievement_at"])):
+            row.update(first_achievement_at=earned.isoformat(), first_hardcore_points=points,
+                       first_retro_points=int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0))
     return days
+
+
+def first_score_point(rows, as_of):
+    scoring_days = [(day, values) for row in rows.values() for day, values in (row.get("days") or {}).items()
+                    if values["hardcore_points"] > 0]
+    if not scoring_days:
+        return None
+    day = min(day for day, _ in scoring_days)
+    parts = [values for date, values in scoring_days if date == day]
+    if all(values.get("first_achievement_at") for values in parts):
+        first = min(parts, key=lambda values: parse_date(values["first_achievement_at"]))
+        return {"date": first["first_achievement_at"], "hardcore_points": first["first_hardcore_points"],
+                "retro_points": first["first_retro_points"]}
+    # Older caches retain daily totals, not exact unlock times. Start at the
+    # first scoring day; this is a daily aggregate, not an exact unlock timestamp.
+    start_of_day = datetime.combine(datetime.fromisoformat(day).date(), time.min).astimezone().astimezone(timezone.utc)
+    return {"date": min(start_of_day, parse_date(as_of)).isoformat(),
+            **{field: sum(values[field] for values in parts) for field in ("hardcore_points", "retro_points")}}
+
+
+def weekly_curve_points(rows, first, now):
+    """Turn the cached daily totals underlying History into weekly cumulative anchors."""
+    if not first:
+        return []
+    days = {day: values for row in rows.values() for day, values in (row.get("days") or {}).items()}
+    first_date = parse_date(first["date"]).astimezone().date()
+    monday = first_date - timedelta(days=first_date.weekday())
+    current_monday = now.astimezone().date() - timedelta(days=now.astimezone().date().weekday())
+    cumulative = {"hardcore_points": 0, "retro_points": 0}
+    points = [first]
+    while monday < current_monday:
+        following = monday + timedelta(days=7)
+        for day, values in days.items():
+            if monday.isoformat() <= day < following.isoformat():
+                for field in cumulative:
+                    cumulative[field] += values[field]
+        end = datetime.combine(following, time.min).astimezone() - timedelta(seconds=1)
+        if end.astimezone(timezone.utc) > parse_date(first["date"]):
+            points.append({"date": end.astimezone(timezone.utc).isoformat(), **cumulative})
+        monday = following
+    return points
 
 
 def week_stats(profile, months, start, end):
@@ -95,6 +140,8 @@ class AllTimeCharts:
     def payload(self, users, now=None):
         now = (now or datetime.now(timezone.utc)).replace(microsecond=0)
         profiles, months = self.db.get_all_time_chart_cache()
+        masteries = self.db.get_recorded_chart_masteries([user["ra_username"] for user in users], now)
+        beaten = self.db.get_recorded_chart_beaten_games([user["ra_username"] for user in users], now)
         series = []
         needs_refresh = False
         oldest = None
@@ -102,7 +149,9 @@ class AllTimeCharts:
             username = user["ra_username"]
             cached = profiles.get(username.lower())
             result = {"username": username, "user_key": f"username:{username.lower()}",
-                      "points": [], "ready": False, "error": self.errors.get(username.lower())}
+                      "points": [], "ready": False, "error": self.errors.get(username.lower()),
+                      "masteries": masteries.get(username.lower(), []),
+                      "beaten": beaten.get(username.lower(), [])}
             if not cached:
                 needs_refresh = True
                 series.append(result)
@@ -117,13 +166,12 @@ class AllTimeCharts:
                 needs_refresh = True
                 series.append(result)
                 continue
-            oldest = min(oldest, joined) if oldest else joined
             key = profile_key(profile)
             result.update(username=profile["username"], user_key=key, joined_at=joined.isoformat(),
                           as_of=cached["refreshed_at"])
             rows = months.get(key, {})
             cumulative = {"hardcore_points": 0, "retro_points": 0}
-            points = [{"date": joined.isoformat(), **cumulative}]
+            points = []
             complete = True
             for month, _, end in month_ranges(joined, now):
                 row = rows.get(month.date().isoformat())
@@ -140,9 +188,19 @@ class AllTimeCharts:
                 if not self.month_is_fresh(row, end, now):
                     needs_refresh = True
             if complete:
-                points.append({"date": cached["refreshed_at"],
-                               "hardcore_points": profile["hardcore_points"],
-                               "retro_points": profile["retro_points"]})
+                first = first_score_point(rows, cached["refreshed_at"])
+                if first:
+                    points = weekly_curve_points(rows, first, now)
+                else:
+                    points = []  # No historical unlock date is invented when only the reported total is known.
+                if first or profile["hardcore_points"] > 0:
+                    if points and points[-1]["date"] == cached["refreshed_at"]:
+                        points.pop()
+                    points.append({"date": cached["refreshed_at"],
+                                   "hardcore_points": profile["hardcore_points"],
+                                   "retro_points": profile["retro_points"]})
+                    start = parse_date(points[0]["date"])
+                    oldest = min(oldest, start) if oldest else start
                 result.update(points=points, ready=True)
             else:
                 needs_refresh = True

@@ -1130,6 +1130,8 @@ async def process_game_awards_for_user(username: str):
 
     beaten_games = sorted(awards["beaten"], key=lambda beaten_game: beaten_game["awarded_at"])
     masteries = sorted(awards["masteries"], key=lambda mastery: mastery["awarded_at"])
+    db.update_recorded_mastery_titles(masteries)
+    db.update_recorded_beaten_metadata(beaten_games)
 
     if not beaten_initialized:
         db.save_processed_beaten_game_events(beaten_games, announced=False)

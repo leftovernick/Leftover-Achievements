@@ -47,9 +47,12 @@ After setup, the main pages are:
 ### Full account history and charts
 
 Charts → **All Time** shows every tracked player on one cumulative score timeline,
-from the oldest account’s creation through the latest refresh. Toggle between
-Hardcore Points and RetroPoints without another data request. Later accounts start
-at zero when they joined, on the same date and score axes.
+from the earliest visible player’s first recorded Hardcore score through the latest
+refresh. Toggle between Hardcore Points and RetroPoints without another data
+request. Each line starts at that player’s first scoring achievement (first scoring
+day for older caches), not at account creation. Masteries appear as small square
+game logos with player/game/date tooltips and hide with their player. Missing logos
+use a gold square. Both metrics share the same date axis and zero-based score axis.
 
 A shared background job fetches account history in rate-limited monthly chunks and
 saves daily Hardcore unlock totals in SQLite. These same records fill **every

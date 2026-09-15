@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Charts</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=charts-2" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=charts-3" />
   </head>
   <body class="web-dashboard charts-page">
     <header class="top-nav">
@@ -32,7 +32,6 @@
             {% for range in [4, 8, 12] %}
               <button type="button" data-chart-range="{{ range }}"{% if range == 8 %} class="active" aria-pressed="true"{% else %} aria-pressed="false"{% endif %}>{{ range }} weeks</button>
             {% endfor %}
-            <button type="button" data-chart-range="all" aria-pressed="false">All Time</button>
           </div>
         </fieldset>
       </section>
@@ -41,25 +40,6 @@
       <section class="panel chart-empty" data-chart-empty hidden>
         <strong>No completed weekly history yet.</strong>
         <span>Charts will appear after the first completed-week snapshot is stored.</span>
-      </section>
-
-      <section class="panel chart-panel chart-all-time" data-chart-all-time hidden>
-        <div class="panel-header chart-all-time-header">
-          <h2 data-all-time-title>All-Time Hardcore Points</h2>
-          <fieldset class="chart-range" aria-label="All-time score metric">
-            <legend>Score</legend>
-            <div>
-              <button type="button" data-chart-metric="hardcore_points" class="active" aria-pressed="true">Hardcore Points</button>
-              <button type="button" data-chart-metric="retro_points" aria-pressed="false">RetroPoints</button>
-            </div>
-          </fieldset>
-        </div>
-        <div class="chart-all-time-status">
-          <p data-all-time-status role="status">Loading account history…</p>
-          <button type="button" class="secondary-action" data-all-time-refresh>Refresh / Retry</button>
-        </div>
-        <div class="chart-canvas-wrap" data-all-time-canvas hidden><canvas id="all-time-score-chart" aria-label="Cumulative scores for all tracked players" role="img"></canvas></div>
-        <p class="chart-history-note">Monthly cumulative scores, starting at each account’s creation date. Historical curves are reconstructed from available Hardcore unlocks and current point values; removed unlocks or score adjustments may differ from past totals. The final point uses the reported account total as of its last refresh.</p>
       </section>
 
       <div class="chart-grid" data-chart-grid aria-live="polite">
@@ -87,6 +67,32 @@
           <div class="chart-canvas-wrap"><canvas id="rank-history-chart"></canvas></div>
         </section>
       </div>
+
+      <section class="panel chart-panel chart-all-time" data-chart-all-time>
+        <div class="panel-header chart-all-time-header">
+          <h2 data-all-time-title>All-Time Hardcore Points</h2>
+          <fieldset class="chart-range" aria-label="All-time score metric">
+            <legend>Score</legend>
+            <div>
+              <button type="button" data-chart-metric="hardcore_points" class="active" aria-pressed="true">Hardcore Points</button>
+              <button type="button" data-chart-metric="retro_points" aria-pressed="false">RetroPoints</button>
+            </div>
+          </fieldset>
+        </div>
+        <fieldset class="chart-award-toggles">
+          <legend>Game markers</legend>
+          <label><input type="checkbox" data-chart-awards="mastery" checked /> <span class="chart-award-key mastery"></span> Masteries</label>
+          <label><input type="checkbox" data-chart-awards="beaten" checked /> <span class="chart-award-key beaten"></span> Games Beaten</label>
+        </fieldset>
+        <div class="chart-all-time-status">
+          <p data-all-time-status role="status">Loading account history…</p>
+          <button type="button" class="secondary-action" data-all-time-refresh>Refresh / Retry</button>
+        </div>
+        <div class="chart-canvas-wrap" data-all-time-canvas hidden><canvas id="all-time-score-chart" aria-label="Cumulative scores for all tracked players" role="img"></canvas></div>
+        <p class="chart-history-note">Square game logos mark masteries (gold frames) and beaten games (white frames). Hover or tap for the player, game, and earned date. Missing logos use a colored square. Icons follow the reconstructed weekly curve; historical award records may be incomplete.</p>
+        <p class="chart-history-note">Weekly cumulative scores, starting at each player’s first recorded Hardcore scoring achievement (first scoring day for older caches). Historical curves use available unlocks and current point values; removed unlocks or score adjustments may differ from past totals. The final point uses the reported account total as of its last refresh.</p>
+      </section>
+
     </main>
     <script src="/static/vendor/chart.umd.min.js"></script>
     <script src="/static/js/charts.js?v={{ chart_js_version }}"></script>

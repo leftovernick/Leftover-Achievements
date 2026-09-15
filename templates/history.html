@@ -30,7 +30,7 @@
       </section>
 
       {% if backfill_pending %}
-        <div class="message history-notice">Full account history is filling in, back to each player’s account creation. Stored results are shown below; refresh for newly completed weeks. Progress is available in Charts → All Time or Settings.</div>
+        <div class="message history-notice" data-history-backfill-notice role="status">Checking full account-history coverage… Stored results are shown below.</div>
       {% endif %}
 
       <div class="history-browser">
@@ -113,6 +113,6 @@
         </div>
       </div>
     </main>
-    <script src="/static/js/history.js"></script>
+    <script src="/static/js/history.js?v=history-2"></script>
   </body>
 </html>

@@ -1,4 +1,28 @@
 (() => {
+  const backfillNotice = document.querySelector('[data-history-backfill-notice]');
+  async function updateBackfillNotice() {
+    if (!backfillNotice) return;
+    try {
+      const response = await fetch('/admin/history-backfill/status', {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`History status request failed: ${response.status}`);
+      const status = await response.json();
+      if (status.state === 'complete') {
+        backfillNotice.hidden = true;
+        return;
+      }
+      backfillNotice.textContent = status.message || 'Checking full account-history coverage…';
+      if (status.state === 'queued' || status.state === 'scanning' || status.state === 'running') {
+        window.setTimeout(updateBackfillNotice, 2000);
+      }
+    } catch (error) {
+      backfillNotice.textContent = 'Could not check account-history progress. Reload to try again.';
+      console.error(error);
+    }
+  }
+  updateBackfillNotice();
+
   const list = document.querySelector("[data-week-list]");
   const sentinel = document.querySelector("[data-week-sentinel]");
   const endMessage = document.querySelector("[data-week-list-end]");

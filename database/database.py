@@ -226,6 +226,13 @@ def init_db():
     """)
     if "daily_json" not in {row[1] for row in cur.execute("PRAGMA table_info(all_time_chart_months)")}:
         cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN daily_json TEXT")
+    if "game_title" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_mastery_events)")}:
+        cur.execute("ALTER TABLE processed_mastery_events ADD COLUMN game_title TEXT")
+    if "game_image" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_mastery_events)")}:
+        cur.execute("ALTER TABLE processed_mastery_events ADD COLUMN game_image TEXT")
+    for column in ("game_title", "game_image"):
+        if column not in {row[1] for row in cur.execute("PRAGMA table_info(processed_beaten_game_events)")}:
+            cur.execute(f"ALTER TABLE processed_beaten_game_events ADD COLUMN {column} TEXT")
     cur.execute(
         """
         INSERT OR IGNORE INTO app_settings (key, value, updated_at)
@@ -673,6 +680,58 @@ def get_all_time_chart_cache() -> tuple[dict, dict]:
     return profiles, months
 
 
+def _get_recorded_chart_awards(usernames: list[str], end: datetime, table: str) -> dict:
+    if table not in {"processed_mastery_events", "processed_beaten_game_events"}:
+        raise ValueError("Unsupported award table")
+    if not usernames:
+        return {}
+    placeholders = ",".join("?" for _ in usernames)
+    result = {}
+    with closing(get_conn()) as conn:
+        for row in conn.execute(f"""
+            SELECT ra_username, game_id, game_title, game_image, awarded_at
+            FROM {table}
+            WHERE ra_username COLLATE NOCASE IN ({placeholders})
+              AND julianday(awarded_at) <= julianday(?)
+            ORDER BY julianday(awarded_at)
+        """, [*usernames, end.isoformat()]):
+            result.setdefault(row["ra_username"].lower(), []).append({
+                "game_id": row["game_id"], "game_title": row["game_title"], "game_image": row["game_image"], "date": row["awarded_at"],
+            })
+    return result
+
+
+def get_recorded_chart_masteries(usernames: list[str], end: datetime) -> dict:
+    return _get_recorded_chart_awards(usernames, end, "processed_mastery_events")
+
+
+def get_recorded_chart_beaten_games(usernames: list[str], end: datetime) -> dict:
+    return _get_recorded_chart_awards(usernames, end, "processed_beaten_game_events")
+
+
+def update_recorded_beaten_metadata(awards: list[dict]):
+    with closing(get_conn()) as conn:
+        conn.executemany("""
+            UPDATE processed_beaten_game_events SET
+                game_title = COALESCE(game_title, ?), game_image = COALESCE(game_image, ?)
+            WHERE ra_username = ? AND game_id = ?
+              AND (game_title IS NULL OR game_image IS NULL)
+        """, [(award.get("game_title"), award.get("game_image"), award["username"], award["game_id"]) for award in awards])
+        conn.commit()
+
+
+def update_recorded_mastery_titles(masteries: list[dict]):
+    if not masteries:
+        return
+    with closing(get_conn()) as conn:
+        conn.executemany("""
+            UPDATE processed_mastery_events SET
+                game_title = COALESCE(game_title, ?), game_image = COALESCE(game_image, ?)
+            WHERE dedupe_key = ? AND (game_title IS NULL OR game_image IS NULL)
+        """, [(award.get("game_title"), award.get("game_image"), award["dedupe_key"]) for award in masteries])
+        conn.commit()
+
+
 def get_history_user_weeks(user_key: str) -> set[str]:
     with closing(get_conn()) as conn:
         return {row[0] for row in conn.execute(
@@ -1005,9 +1064,11 @@ def save_processed_mastery_event(mastery: dict, announced: bool):
                 game_id,
                 awarded_at,
                 announced,
-                processed_at
+                processed_at,
+                game_title,
+                game_image
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dedupe_key) DO NOTHING
             """,
             (
@@ -1017,6 +1078,8 @@ def save_processed_mastery_event(mastery: dict, announced: bool):
                 mastery["awarded_at"],
                 1 if announced else 0,
                 datetime.now(timezone.utc).isoformat(),
+                mastery.get("game_title"),
+                mastery.get("game_image"),
             ),
         )
         conn.commit()
@@ -1037,9 +1100,11 @@ def save_processed_mastery_events(masteries: list[dict], announced: bool):
                 game_id,
                 awarded_at,
                 announced,
-                processed_at
+                processed_at,
+                game_title,
+                game_image
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dedupe_key) DO NOTHING
             """,
             [
@@ -1050,6 +1115,8 @@ def save_processed_mastery_events(masteries: list[dict], announced: bool):
                     mastery["awarded_at"],
                     1 if announced else 0,
                     processed_at,
+                    mastery.get("game_title"),
+                    mastery.get("game_image"),
                 )
                 for mastery in masteries
             ],
@@ -1099,9 +1166,9 @@ def save_processed_beaten_game_event(beaten_game: dict, announced: bool):
                 game_id,
                 awarded_at,
                 announced,
-                processed_at
+                processed_at, game_title, game_image
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ra_username, game_id) DO NOTHING
             """,
             (
@@ -1110,6 +1177,8 @@ def save_processed_beaten_game_event(beaten_game: dict, announced: bool):
                 beaten_game["awarded_at"],
                 1 if announced else 0,
                 datetime.now(timezone.utc).isoformat(),
+                beaten_game.get("game_title"),
+                beaten_game.get("game_image"),
             ),
         )
         conn.commit()
@@ -1129,9 +1198,9 @@ def save_processed_beaten_game_events(beaten_games: list[dict], announced: bool)
                 game_id,
                 awarded_at,
                 announced,
-                processed_at
+                processed_at, game_title, game_image
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ra_username, game_id) DO NOTHING
             """,
             [
@@ -1141,6 +1210,8 @@ def save_processed_beaten_game_events(beaten_games: list[dict], announced: bool)
                     beaten_game["awarded_at"],
                     1 if announced else 0,
                     processed_at,
+                    beaten_game.get("game_title"),
+                    beaten_game.get("game_image"),
                 )
                 for beaten_game in beaten_games
             ],
