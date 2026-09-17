@@ -10,7 +10,14 @@ class Element {
     this.dataset = dataset;
     this.listeners = {};
     this.classes = new Set();
-    this.classList = { toggle: (name, active) => active ? this.classes.add(name) : this.classes.delete(name) };
+    this.classList = {
+      toggle: (name, active) => active ? this.classes.add(name) : this.classes.delete(name),
+      add: (name) => this.classes.add(name),
+      remove: (name) => this.classes.delete(name),
+    };
+    this.style = {};
+    this.clientWidth = 800;
+    this.scrollLeft = 0;
   }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   setAttribute(name, value) { this[name] = value; }
@@ -18,6 +25,7 @@ class Element {
 }
 const ranges = ['4', '8', '12'].map((value) => new Element({ chartRange: value }));
 const metrics = ['hardcore_points', 'retro_points'].map((value) => new Element({ chartMetric: value }));
+const views = ['fit', 'timeline'].map((value) => new Element({ chartView: value }));
 const awards = ['mastery', 'beaten'].map((value) => Object.assign(new Element({chartAwards: value}), {checked: true}));
 const elements = new Map();
 function element(key) {
@@ -61,8 +69,10 @@ const logoImages = [];
 const logoDraws = [];
 const timers = new Map();
 let timerId = 0;
+let clock = Date.now();
+class TestDate extends Date { static now() { return clock; } }
 const context = {
-  Chart, AbortController, Image: class {
+  Chart, Date: TestDate, AbortController, Image: class {
     naturalWidth = 40;
     naturalHeight = 20;
     set src(url) { logoImages.push(url); this.onload?.(); }
@@ -70,7 +80,7 @@ const context = {
   console: { ...console, error: (error) => consoleErrors.push(error) },
   document: {
     querySelector: element,
-    querySelectorAll: (selector) => selector === '[data-chart-range]' ? ranges : selector === '[data-chart-metric]' ? metrics : selector === '[data-chart-awards]' ? awards : [],
+    querySelectorAll: (selector) => selector === '[data-chart-range]' ? ranges : selector === '[data-chart-metric]' ? metrics : selector === '[data-chart-view]' ? views : selector === '[data-chart-awards]' ? awards : [],
     getElementById: element,
     createElement: () => ({getContext: () => ({fillRect() {}, strokeRect() {}, drawImage: (...args) => logoDraws.push(args)})}),
   },
@@ -101,6 +111,24 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../static/js/charts.js'
   assert.equal(chart.options.scales.x.min, Date.parse(allTime.start));
   assert.equal(chart.data.datasets[1].data[0].x, Date.parse('2018-01-01T00:00:00Z'));
   assert.equal(chart.data.datasets[0].data[0].y, 0);
+  views[1].click();
+  chart = element('all-time-score-chart').chart;
+  const monthWidth = 30.4375 * 24 * 60 * 60 * 1000;
+  assert.ok(Math.abs((chart.options.scales.x.max - chart.options.scales.x.min) - monthWidth) < 1);
+  assert.ok(chart.options.scales.y.max < 10, 'the visible month sets the vertical scale instead of the lifetime maximum');
+  assert.equal(chart.options.scales.y.min, 0);
+  assert.ok(parseFloat(element('[data-all-time-scroll-track]').style.width) > 800);
+  assert.equal(element('[data-all-time-canvas]').classes.has('timeline-view'), true);
+  const firstWindowStart = chart.options.scales.x.min;
+  element('[data-all-time-canvas]').scrollLeft = 800;
+  element('[data-all-time-canvas]').listeners.scroll();
+  assert.ok(chart.options.scales.x.min > firstWindowStart, 'horizontal scrolling advances the date window');
+  views[0].click();
+  chart = element('all-time-score-chart').chart;
+  assert.equal(chart.options.scales.x.min, Date.parse(allTime.start));
+  assert.equal(chart.options.scales.x.max, Date.parse(allTime.end));
+  assert.ok(chart.options.scales.y.max > 100, 'Fit History restores a vertical range for all visible scores');
+  assert.equal(element('[data-all-time-canvas]').classes.has('timeline-view'), false);
   chart.options.plugins.legend.onClick(null, { datasetIndex: 0 }, { chart });
   assert.equal(chart.options.scales.x.min, Date.parse('2018-01-01T00:00:00Z'));
   metrics[1].click();
@@ -167,14 +195,66 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../static/js/charts.js'
   assert.equal(logo.height, 22);
   assert.equal(logoDraws[0][3] / logoDraws[0][4], 2, 'square framing preserves the artwork aspect ratio');
   assert.equal(marker.pointStyle({raw: marker.data[0]}), logo);
+  assert.equal(marker.pointRadius({raw: marker.data[0]}), 9);
   assert.equal(logoImages.length, 1, 'game logo is cached across redraws');
   assert.equal(marker.pointStyle({raw: {}}), 'rect');
   assert.match(chart.options.plugins.tooltip.callbacks.label({ dataset: marker, raw: marker.data[0] }), /Mastery: Example Game/);
   assert.equal(chart.options.plugins.legend.labels.filter({datasetIndex: 2}, chart.data), false);
+  timers.clear();
+  const play = element('[data-timeline-play]');
+  play.click();
+  chart = element('all-time-score-chart').chart;
+  assert.equal(views[0].classes.has('active'), true, 'Fit History playback stays in Fit History');
+  assert.equal(play.textContent, '❚❚ Pause');
+  assert.equal(chart.data.datasets.find((dataset) => dataset.isMastery).data.length, 0);
+  clock += 11 * 365.25 / 30.4375 / 2.5 * 1000;
+  [...timers.values()].at(-1)();
+  const poppedMastery = chart.data.datasets.find((dataset) => dataset.isMastery);
+  assert.equal(poppedMastery.data.length, 1,
+    'mastery marker appears only when playback reaches its date');
+  assert.equal(poppedMastery.pointRadius({raw: poppedMastery.data[0]}), 0,
+    'new award marker starts collapsed');
+  assert.equal(poppedMastery.pointStyle({raw: poppedMastery.data[0]}).width, 1,
+    'canvas-image marker itself starts collapsed');
+  clock += 400;
+  assert.ok(poppedMastery.pointRadius({raw: poppedMastery.data[0]}) > 9,
+    'award marker visibly overshoots its normal size');
+  assert.ok(poppedMastery.pointStyle({raw: poppedMastery.data[0]}).width > 22,
+    'canvas-image marker dimensions participate in the overshoot');
+  clock += 300;
+  assert.equal(poppedMastery.pointRadius({raw: poppedMastery.data[0]}), 9,
+    'award marker settles at its normal size');
+  assert.equal(poppedMastery.pointStyle({raw: poppedMastery.data[0]}).width, 22);
+  assert.equal(element('[data-all-time-canvas]').scrollLeft, 0, 'Fit History playback does not scroll');
+  play.click();
+  assert.equal(play.textContent, '▶ Play');
+  timers.clear();
+  views[1].click();
+  play.click();
+  clock += 5000;
+  [...timers.values()].at(-1)();
+  assert.ok(element('[data-all-time-canvas]').scrollLeft > 0, 'Monthly Timeline playback follows the playhead');
+  const monthlyChart = element('all-time-score-chart').chart;
+  const monthlyLineEnd = monthlyChart.data.datasets
+    .filter((dataset) => !dataset.isAward && dataset.data.length)
+    .map((dataset) => dataset.data.at(-1).x)
+    .reduce((latest, value) => Math.max(latest, value), 0);
+  assert.ok(monthlyChart.options.scales.x.max > monthlyLineEnd,
+    'Monthly playback leaves visible space ahead of the drawing line');
+  play.click();
+  views[0].click();
+  chart = element('all-time-score-chart').chart;
+  marker = chart.data.datasets.find((dataset) => dataset.isMastery);
   if (!chart.isDatasetVisible(1)) chart.options.plugins.legend.onClick(null, {datasetIndex: 1}, {chart});
   chart.options.plugins.legend.onClick(null, {datasetIndex: 0}, {chart});
   assert.equal(marker.hidden, true);
   assert.equal(chart.options.scales.x.min, Date.parse('2018-01-01T00:00:00Z'));
+  timers.clear();
+  play.click();
+  assert.equal(chart.options.scales.x.min, Date.parse('2018-01-01T00:00:00Z'),
+    'playback starts with the earliest visible player, not a hidden player');
+  assert.equal(chart.data.datasets[1].data[0].x, Date.parse('2018-01-01T00:00:00Z'));
+  play.click();
   metrics[0].click();
   chart = element('all-time-score-chart').chart;
   marker = chart.data.datasets.find((dataset) => dataset.isMastery);

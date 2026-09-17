@@ -50,7 +50,7 @@
                   {% if player.avatar %}
                     <img src="{{ player.avatar }}" alt="{{ player.username }} avatar" class="avatar" />
                   {% endif %}
-                  <span class="username">{{ player.username }}</span>
+                  {% if player.profile_ulid %}<a class="username user-link" href="/users/{{ player.profile_ulid }}">{{ player.username }}</a>{% else %}<span class="username">{{ player.username }}</span>{% endif %}
                 </div>
                 <h3>{{ player.game_title }}</h3>
                 <p class="rich-presence">{{ player.rich_presence }}</p>
@@ -93,7 +93,7 @@
                 <td class="player-cell">
                   <div class="player">
                     {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar small-avatar" />{% endif %}
-                    <span class="username">{{ u.username }}</span>
+                    {% if u.ulid %}<a class="username user-link" href="/users/{{ u.ulid }}">{{ u.username }}</a>{% else %}<span class="username">{{ u.username }}</span>{% endif %}
                   </div>
                 </td>
                 <td class="points">{{ u.hardcore_display }}</td>
@@ -122,7 +122,7 @@
                 <td class="player-cell">
                   <div class="player">
                     {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" class="avatar small-avatar" />{% endif %}
-                    <span class="username">{{ u.username }}</span>
+                    {% if u.ulid %}<a class="username user-link" href="/users/{{ u.ulid }}">{{ u.username }}</a>{% else %}<span class="username">{{ u.username }}</span>{% endif %}
                   </div>
                 </td>
                 <td class="points weekly-hardcore-points">+{{ u.weekly_hardcore_display }}</td>
@@ -149,7 +149,7 @@
           {% for activity in recent_activity %}
             <tr>
               <td>{% if activity.achievement_badge %}<img src="{{ activity.achievement_badge }}" alt="{{ activity.achievement_title }} badge" class="achievement-badge table-badge" />{% endif %}</td>
-              <td>{{ activity.username }}</td>
+              <td>{% if activity.profile_ulid %}<a class="user-link" href="/users/{{ activity.profile_ulid }}">{{ activity.username }}</a>{% else %}{{ activity.username }}{% endif %}</td>
               <td>
                 <strong>{{ activity.achievement_title }}</strong>
                 <span>{{ activity.achievement_description }}</span>

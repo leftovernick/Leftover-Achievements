@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ profile.canonical_username }} · LeftoverAchievements</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=profile-1" />
+  </head>
+  <body class="web-dashboard profile-page">
+    <header class="top-nav">
+      <a href="/" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" width="24" height="24" /><span>LeftoverAchievements</span></a>
+      <nav aria-label="Main navigation">
+        <a href="/display" class="display-nav-link">Display</a><a href="/">Dashboard</a><a href="/users" class="active">Users</a><a href="/history">History</a><a href="/charts">Charts</a><a href="/admin">Settings</a>
+      </nav>
+    </header>
+    <main class="dashboard-shell profile-shell">
+      <section class="panel profile-header">
+        {% if profile.avatar %}<img class="profile-avatar" src="{{ profile.avatar }}" alt="{{ profile.canonical_username }} avatar" />{% endif %}
+        <div class="profile-identity"><p class="eyebrow">RetroAchievements Profile</p><h1>{{ profile.canonical_username }}</h1></div>
+        <div class="profile-score"><span>Hardcore Points</span><strong>{{ hardcore_display }}</strong></div>
+        <div class="profile-score"><span>RetroPoints</span><strong>{{ retro_display }}</strong></div>
+        <div class="profile-score profile-game-total"><span>Games Mastered</span><strong>{{ awards.masteries|length }}</strong></div>
+        <div class="profile-score profile-game-total"><span>Games Beaten</span><strong>{{ awards.beaten|length }}</strong></div>
+      </section>
+
+      <section class="panel profile-feature">
+        <div class="panel-header"><h2>{% if current %}Currently Playing{% else %}Recently Played{% endif %}</h2></div>
+        {% if current %}
+          <div class="profile-game-feature">
+            {% if current.game_image %}<img class="profile-feature-art" src="{{ current.game_image }}" alt="{{ current.game_title }} artwork" />{% endif %}
+            <div><h3>{{ current.game_title }}</h3><p class="profile-system">{{ current.console or 'System unavailable' }}</p>
+              {% if current.rich_presence %}<p class="rich-presence">{{ current.rich_presence }}</p>{% endif %}
+              <div class="game-progress"><div><span class="stat-label">Hardcore Achievements</span><strong>{{ current.hardcore_achievements }} / {{ current.total_achievements }}</strong></div><div><span class="stat-label">Complete</span><strong>{{ current.completion_percentage }}%</strong></div><div><span class="stat-label">Hardcore Points</span><strong>{{ current.hardcore_points }} / {{ current.total_points }}</strong></div></div>
+            </div>
+          </div>
+        {% elif recent %}
+          <div class="profile-game-feature">
+            {% if recent.game_image %}<img class="profile-feature-art" src="{{ recent.game_image }}" alt="{{ recent.game_title }} artwork" />{% endif %}
+            <div><h3>{{ recent.game_title }}</h3><p class="profile-system">{{ recent.console or 'System unavailable' }}</p>
+              {% if recent.last_played %}<p class="profile-date">Last played {{ recent.last_played }}</p>{% endif %}
+              {% if recent.rich_presence %}<p class="rich-presence">{{ recent.rich_presence }}</p>{% endif %}
+            </div>
+          </div>
+        {% else %}<p class="empty">No recent game available.</p>{% endif %}
+      </section>
+
+      {% for kind, heading, empty_text in [('masteries', 'Mastered Games', 'No mastered games yet'), ('beaten', 'Beaten Games', 'No beaten games yet')] %}
+      <section class="panel profile-awards">
+        <div class="panel-header"><h2>{{ heading }}</h2><strong class="profile-award-count {{ 'gold' if kind == 'masteries' else 'white' }}" aria-label="{{ awards[kind]|length }} {{ heading|lower }}">{{ awards[kind]|length }}</strong></div>
+        {% if awards[kind] %}<div class="profile-award-grid">
+          {% for game in awards[kind] %}<article class="profile-award">
+            {% if game.game_image %}<img class="profile-award-art {{ 'gold' if kind == 'masteries' else 'white' }}" src="{{ game.game_image }}" alt="{{ game.game_title }} icon" />{% else %}<div class="profile-award-art {{ 'gold' if kind == 'masteries' else 'white' }}" aria-hidden="true"></div>{% endif %}
+            <div><h3>{{ game.game_title }}</h3><p class="profile-system">{{ game.console or 'System unavailable' }}</p><time class="profile-date" datetime="{{ game.awarded_at }}">{{ game.awarded_at[:10] }}</time></div>
+          </article>{% endfor %}
+        </div>{% else %}<p class="empty">{{ empty_text }}</p>{% endif %}
+      </section>
+      {% endfor %}
+      {% if unavailable %}<p class="profile-notice">Some RetroAchievements data is temporarily unavailable. Saved details are shown where available.</p>{% endif %}
+    </main>
+  </body>
+</html>

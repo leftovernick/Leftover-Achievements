@@ -121,6 +121,15 @@ def init_db():
         )
         """
     )
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_profile_details (
+            ra_ulid TEXT PRIMARY KEY COLLATE NOCASE,
+            awards_json TEXT,
+            awards_refreshed_at TEXT,
+            recent_json TEXT,
+            recent_refreshed_at TEXT
+        )
+    """)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS processed_achievement_unlocks (
@@ -263,6 +272,50 @@ def get_tracked_users():
         cur = conn.cursor()
         cur.execute("SELECT id, ra_username, ra_ulid, created_at FROM tracked_users ORDER BY created_at ASC")
         return [dict(r) for r in cur.fetchall()]
+
+
+def get_profile_identity(ra_ulid: str) -> dict | None:
+    """Resolve a permanent RA id from tracked or retained historical data."""
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT t.ra_username, t.ra_ulid, p.canonical_username, p.avatar,
+                   p.hardcore_points, p.retro_points
+            FROM tracked_users t LEFT JOIN user_profiles p ON p.ra_ulid = t.ra_ulid COLLATE NOCASE
+            WHERE t.ra_ulid = ? COLLATE NOCASE
+            UNION ALL
+            SELECT ra_username, ra_ulid, canonical_username, avatar, hardcore_points, retro_points
+            FROM user_profiles WHERE ra_ulid = ? COLLATE NOCASE
+            UNION ALL
+            SELECT ra_username, ra_ulid, canonical_username, avatar, NULL, NULL
+            FROM weekly_history_rankings WHERE ra_ulid = ? COLLATE NOCASE
+            LIMIT 1
+        """, (ra_ulid, ra_ulid, ra_ulid)).fetchone()
+        return dict(row) if row else None
+
+
+def get_profile_details(ra_ulid: str) -> dict:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM user_profile_details WHERE ra_ulid = ? COLLATE NOCASE", (ra_ulid,)).fetchone()
+        if not row:
+            return {}
+        result = dict(row)
+        for key in ("awards", "recent"):
+            payload = result.pop(f"{key}_json")
+            result[key] = json.loads(payload) if payload else None
+        return result
+
+
+def save_profile_detail(ra_ulid: str, kind: str, payload):
+    if kind not in {"awards", "recent"}:
+        raise ValueError("Unsupported profile detail")
+    with get_conn() as conn:
+        conn.execute(f"""
+            INSERT INTO user_profile_details (ra_ulid, {kind}_json, {kind}_refreshed_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ra_ulid) DO UPDATE SET
+                {kind}_json = excluded.{kind}_json,
+                {kind}_refreshed_at = excluded.{kind}_refreshed_at
+        """, (ra_ulid, json.dumps(payload), datetime.now(timezone.utc).isoformat()))
 
 
 def tracked_user_count() -> int:

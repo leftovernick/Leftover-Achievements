@@ -63,18 +63,12 @@
   const audioSourcesByType = {
     achievement: [
       '/static/audio/achievement-unlocked.mp3',
-      '/static/audio/achievement-unlocked.wav',
-      '/static/audio/achievement-unlocked.ogg',
     ],
     mastery: [
       '/static/audio/game-mastered.mp3',
-      '/static/audio/mastery.wav',
-      '/static/audio/mastery.ogg',
     ],
     beaten: [
       '/static/audio/game-beaten.mp3',
-      '/static/audio/game-beaten.wav',
-      '/static/audio/game-beaten.ogg',
     ],
   };
   let notificationActive = false;

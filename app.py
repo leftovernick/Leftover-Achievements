@@ -9,6 +9,7 @@ import socket
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urljoin
 from urllib.parse import urlencode
 
 import aiohttp
@@ -33,6 +34,24 @@ from services.updater import ApplicationUpdater, UpdateError
 
 
 app = FastAPI(title="LeftoverAchievements Display")
+
+
+@app.middleware("http")
+async def redirect_legacy_display_audio(request: Request, call_next):
+    legacy_audio = {
+        "achievement-unlocked.wav": "achievement-unlocked.mp3",
+        "achievement-unlocked.ogg": "achievement-unlocked.mp3",
+        "mastery.wav": "game-mastered.mp3",
+        "mastery.ogg": "game-mastered.mp3",
+        "game-beaten.wav": "game-beaten.mp3",
+        "game-beaten.ogg": "game-beaten.mp3",
+    }
+    filename = request.url.path.removeprefix("/static/audio/")
+    if request.url.path.startswith("/static/audio/") and filename in legacy_audio:
+        return RedirectResponse(f"/static/audio/{legacy_audio[filename]}", status_code=307)
+    return await call_next(request)
+
+
 app.mount("/static", StaticFiles(directory=str(runtime.resource_path("static"))), name="static")
 app.mount(
     "/runtime-audio",
@@ -66,6 +85,7 @@ WEEKLY_CACHE_TTL = timedelta(minutes=10)
 PROFILE_CACHE_TTL = timedelta(minutes=5)
 CURRENTLY_PLAYING_CACHE_TTL = timedelta(seconds=75)
 CURRENTLY_PLAYING_STALE_MAX = timedelta(minutes=10)
+profile_detail_retry_at: dict[tuple[str, str], datetime] = {}
 weekly_refresh_task = None
 history_backfill_task = None
 history_refresh_live_requested = False
@@ -1700,6 +1720,7 @@ async def dashboard_context():
         if current_payload:
             currently_playing = {
                 **current_payload,
+                "profile_ulid": cached_profile.get("ra_ulid") or u.get("ra_ulid"),
                 "hardcore_points_display": format_points(current_payload.get("hardcore_points", 0)),
                 "total_points_display": format_points(current_payload.get("total_points", 0)),
             }
@@ -1722,6 +1743,14 @@ async def dashboard_context():
 
     recent_activity = prepare_recent_activity(db.get_recent_activity(limit=RECENT_ACTIVITY_LIMIT))
     enriched = [enrich(u) for u in users]
+    ulids_by_name = {}
+    for user in enriched:
+        if user["ulid"]:
+            ulids_by_name[user["username"].lower()] = user["ulid"]
+            original = next(u["ra_username"] for u in users if u["id"] == user["id"])
+            ulids_by_name[original.lower()] = user["ulid"]
+    for activity in recent_activity:
+        activity["profile_ulid"] = ulids_by_name.get(activity["username"].lower())
 
     schedule_user_snapshot_refresh_if_needed(users, profile_cache)
     schedule_weekly_refresh_if_needed(users, weekly_cache, week_start, week_end)
@@ -1777,11 +1806,108 @@ async def admin(request: Request, message: str = None):
 
 @app.get("/users")
 async def users(request: Request, message: str = None):
+    profiles = db.get_user_profiles()
+    tracked = db.get_tracked_users()
+    for user in tracked:
+        profile = profiles.get(user["ra_username"].lower(), {})
+        user["display_name"] = profile.get("canonical_username") or user["ra_username"]
+        user["profile_ulid"] = profile.get("ra_ulid") or user.get("ra_ulid")
     return templates.TemplateResponse(
         request=request,
         name="users.html",
-        context={"users": db.get_tracked_users(), "message": message},
+        context={"users": tracked, "message": message},
     )
+
+
+def sorted_profile_awards(awards: dict | None) -> dict:
+    """Keep canonical highest award in exactly one section."""
+    awards = awards or {}
+    mastered = sorted(awards.get("masteries", []), key=lambda game: game.get("awarded_at") or "", reverse=True)
+    mastered_ids = {game["game_id"] for game in mastered}
+    beaten = sorted(
+        (game for game in awards.get("beaten", []) if game["game_id"] not in mastered_ids),
+        key=lambda game: game.get("awarded_at") or "",
+        reverse=True,
+    )
+    return {"masteries": mastered, "beaten": beaten}
+
+
+@app.get("/users/{ra_ulid}")
+async def user_profile(request: Request, ra_ulid: str):
+    identity = db.get_profile_identity(ra_ulid)
+    if not identity:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    username = identity["ra_username"]
+    profile = next((p for p in db.get_user_profiles().values() if (p.get("ra_ulid") or "").lower() == ra_ulid.lower()), None)
+    if not profile:
+        profile = {"canonical_username": identity.get("canonical_username") or username,
+                   "avatar": identity.get("avatar"), "ra_ulid": ra_ulid,
+                   "hardcore_points": identity.get("hardcore_points"), "retro_points": identity.get("retro_points")}
+        try:
+            fresh = await ra_client.lookup_user(ra_ulid)
+            db.save_user_profile(username, fresh)
+            profile = {"canonical_username": fresh["username"], "avatar": fresh.get("avatar"),
+                       "hardcore_points": fresh["hardcore_points"], "retro_points": fresh["retro_points"], "ra_ulid": ra_ulid}
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            pass
+
+    details = db.get_profile_details(ra_ulid)
+    unavailable = False
+    awards = details.get("awards")
+    if "awards" not in details or cache_is_stale(details.get("awards_refreshed_at"), timedelta(hours=1)):
+        retry_key = (ra_ulid.lower(), "awards")
+        if datetime.now(timezone.utc) < profile_detail_retry_at.get(retry_key, datetime.min.replace(tzinfo=timezone.utc)):
+            unavailable = True
+        else:
+            try:
+                awards = await ra_client.hardcore_game_awards(ra_ulid, fetch_all=True)
+                db.save_profile_detail(ra_ulid, "awards", awards)
+                profile_detail_retry_at.pop(retry_key, None)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                profile_detail_retry_at[retry_key] = datetime.now(timezone.utc) + timedelta(minutes=5)
+                unavailable = True
+    awards = sorted_profile_awards(awards)
+
+    current_cache = db.get_currently_playing_cache().get(username.lower(), {})
+    current = visible_current_activity(current_cache)
+    recent = None
+    if not current:
+        recent = details.get("recent")
+        if "recent" not in details or cache_is_stale(details.get("recent_refreshed_at"), timedelta(minutes=5)):
+            retry_key = (ra_ulid.lower(), "recent")
+            if datetime.now(timezone.utc) < profile_detail_retry_at.get(retry_key, datetime.min.replace(tzinfo=timezone.utc)):
+                unavailable = True
+            else:
+                try:
+                    summary = await ra_client.user_summary(ra_ulid, recent_games_count=1)
+                    played = summary.get("RecentlyPlayed") or summary.get("recentlyPlayed") or []
+                    latest = played[0] if played and isinstance(played[0], dict) else {}
+                    game_id = int(latest.get("GameID") or latest.get("gameId") or 0)
+                    game = ra_client._current_game_from_summary(summary, game_id) if game_id else {}
+                    presence_time = ra_client._parse_api_datetime(summary.get("RichPresenceMsgDate") or summary.get("richPresenceMsgDate"))
+                    presence = summary.get("RichPresenceMsg") or summary.get("richPresenceMsg")
+                    presence_game_id = int(summary.get("LastGameID") or summary.get("lastGameId") or 0)
+                    if (presence_game_id != game_id or not presence_time
+                            or datetime.now(timezone.utc) - presence_time.astimezone(timezone.utc) > timedelta(days=1)):
+                        presence = None
+                    recent = {
+                        "game_title": game.get("title"), "game_image": urljoin("https://retroachievements.org", game["image"]) if game.get("image") else None,
+                        "console": game.get("console"), "last_played": game.get("last_played"),
+                        "rich_presence": presence,
+                    } if game.get("title") else None
+                    db.save_profile_detail(ra_ulid, "recent", recent)
+                    profile_detail_retry_at.pop(retry_key, None)
+                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                    profile_detail_retry_at[retry_key] = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    unavailable = True
+
+    return templates.TemplateResponse(request=request, name="user_profile.html", context={
+        "profile": profile, "current": current, "recent": recent, "awards": awards,
+        "unavailable": unavailable, "ra_ulid": ra_ulid,
+        "hardcore_display": format_points(profile["hardcore_points"]) if profile.get("hardcore_points") is not None else "—",
+        "retro_display": format_points(profile["retro_points"]) if profile.get("retro_points") is not None else "—",
+    })
 
 
 @app.post("/admin/history-backfill")

@@ -53,7 +53,7 @@
             {% for u in users %}
             <tr>
               <td>{{ u.id }}</td>
-              <td>{{ u.ra_username }}</td>
+              <td>{% if u.profile_ulid %}<a class="user-link" href="/users/{{ u.profile_ulid }}">{{ u.display_name }}</a>{% else %}{{ u.display_name }}{% endif %}</td>
               <td>{{ u.ra_ulid or "-" }}</td>
               <td>{{ u.created_at }}</td>
               <td>

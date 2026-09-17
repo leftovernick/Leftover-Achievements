@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Display</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=display-scale-7" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=display-weekly-score-1" />
   </head>
   <body class="pi-display" data-display-scale="{{ display_scale }}">
     <main class="display-shell" data-display-rotation data-display-scale="{{ display_scale }}" data-auto-reload="{{ 'true' if display_auto_reload else 'false' }}" data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
@@ -48,8 +48,7 @@
                   {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.username }} avatar" />{% endif %}
                   <span>{{ u.username }}</span>
                 </span>
-                <span class="display-rank-stat display-rank-stat-primary"><strong class="display-hc-points">+{{ u.weekly_hardcore_display }}</strong></span>
-                <span class="display-rank-stat display-rank-stat-secondary"><em class="display-rp-points">(+{{ u.weekly_retro_points_display }})</em></span>
+                <span class="display-rank-stat display-weekly-score"><strong class="display-hc-points">+{{ u.weekly_hardcore_display }}</strong> <em class="display-rp-points">({{ u.weekly_retro_points_display }})</em></span>
               </li>
             {% else %}
               <li class="display-empty">No tracked users yet.</li>

@@ -94,7 +94,7 @@
                     <td class="player-cell">
                       <div class="player">
                         {% if u.avatar %}<img src="{{ u.avatar }}" alt="{{ u.canonical_username }} avatar" class="avatar small-avatar" />{% endif %}
-                        <span class="username">{{ u.canonical_username }}</span>
+                        {% if u.ra_ulid %}<a class="username user-link" href="/users/{{ u.ra_ulid }}">{{ u.canonical_username }}</a>{% else %}<span class="username">{{ u.canonical_username }}</span>{% endif %}
                       </div>
                     </td>
                     <td class="points weekly-hardcore-points">+{{ u.hardcore_points_display }}</td>

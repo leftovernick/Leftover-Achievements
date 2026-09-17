@@ -276,6 +276,8 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('class="panel chart-panel chart-all-time" data-chart-all-time>', template)
         self.assertNotIn('data-chart-range="all"', template)
         self.assertIn('data-chart-metric="retro_points"', template)
+        self.assertIn('styles.css?v=charts-timeline-play-1', template)
+        self.assertIn('data-timeline-play', template)
         self.assertIn("if (allTimeData) renderAllTime(allTimeData)", javascript)
         self.assertIn("loadAllTime();", javascript)
         self.assertIn("options.scales.y.min = 0", javascript)

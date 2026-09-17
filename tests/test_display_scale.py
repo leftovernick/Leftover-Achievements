@@ -73,6 +73,9 @@ class DisplayScaleTests(unittest.IsolatedAsyncioTestCase):
             css,
         )
         self.assertIn("aspect-ratio: auto", css)
+        self.assertIn('class="display-rank-stat display-weekly-score"', display_template)
+        self.assertIn('+{{ u.weekly_hardcore_display }}</strong> <em class="display-rp-points">({{ u.weekly_retro_points_display }})', display_template)
+        self.assertIn('.pi-display .display-slide[data-slide="weekly"] .display-list li', css)
         self.assertIn('name="display_scale_value"', admin_template)
         self.assertIn('.pi-display[data-display-scale="2"]', css)
         self.assertIn('.pi-display[data-display-scale="3"]', css)

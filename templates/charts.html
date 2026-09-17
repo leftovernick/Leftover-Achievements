@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Charts</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=charts-3" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=charts-timeline-play-1" />
   </head>
   <body class="web-dashboard charts-page">
     <header class="top-nav">
@@ -78,6 +78,14 @@
               <button type="button" data-chart-metric="retro_points" aria-pressed="false">RetroPoints</button>
             </div>
           </fieldset>
+          <fieldset class="chart-range" aria-label="All-time chart view">
+            <legend>View</legend>
+            <div>
+              <button type="button" data-chart-view="fit" class="active" aria-pressed="true">Fit History</button>
+              <button type="button" data-chart-view="timeline" aria-pressed="false">Monthly Timeline</button>
+              <button type="button" data-timeline-play aria-pressed="false" title="Play visible players from their earliest score">▶ Play</button>
+            </div>
+          </fieldset>
         </div>
         <fieldset class="chart-award-toggles">
           <legend>Game markers</legend>
@@ -88,13 +96,19 @@
           <p data-all-time-status role="status">Loading account history…</p>
           <button type="button" class="secondary-action" data-all-time-refresh>Refresh / Retry</button>
         </div>
-        <div class="chart-canvas-wrap" data-all-time-canvas hidden><canvas id="all-time-score-chart" aria-label="Cumulative scores for all tracked players" role="img"></canvas></div>
-        <p class="chart-history-note">Square game logos mark masteries (gold frames) and beaten games (white frames). Hover or tap for the player, game, and earned date. Missing logos use a colored square. Icons follow the reconstructed weekly curve; historical award records may be incomplete.</p>
+        <div class="chart-canvas-wrap all-time-scroll-viewport" data-all-time-canvas hidden>
+          <div class="all-time-scroll-track" data-all-time-scroll-track>
+            <div class="all-time-canvas-surface" data-all-time-canvas-surface>
+              <canvas id="all-time-score-chart" aria-label="Cumulative scores for all tracked players" role="img"></canvas>
+            </div>
+          </div>
+        </div>
+        <p class="chart-history-note">Monthly Timeline shows roughly one month at a time; scroll horizontally to move through history. Square game logos mark masteries (gold frames) and beaten games (white frames). Hover or tap for the player, game, and earned date. Missing logos use a colored square. Icons follow the reconstructed weekly curve; historical award records may be incomplete.</p>
         <p class="chart-history-note">Weekly cumulative scores, starting at each player’s first recorded Hardcore scoring achievement (first scoring day for older caches). Historical curves use available unlocks and current point values; removed unlocks or score adjustments may differ from past totals. The final point uses the reported account total as of its last refresh.</p>
       </section>
 
     </main>
     <script src="/static/vendor/chart.umd.min.js"></script>
-    <script src="/static/js/charts.js?v={{ chart_js_version }}"></script>
+    <script src="/static/js/charts.js?v={{ chart_js_version }}-timeline-play-5"></script>
   </body>
 </html>

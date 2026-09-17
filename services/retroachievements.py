@@ -220,6 +220,7 @@ class RetroAchievements:
             "game_title": game_title,
             "game_id": game_id,
             "game_image": game_image,
+            "console": current_game.get("console") or game_progress.get("ConsoleName") or game_progress.get("consoleName"),
             "rich_presence": rich_presence,
             "hardcore_achievements": hardcore_achievements,
             "total_achievements": total_achievements,
@@ -250,6 +251,7 @@ class RetroAchievements:
             return {
                 "title": game.get("Title") or game.get("title"),
                 "image": image,
+                "console": game.get("ConsoleName") or game.get("consoleName"),
                 "last_played": game.get("LastPlayed") or game.get("lastPlayed"),
             }
 
@@ -348,6 +350,7 @@ class RetroAchievements:
                         "game_id": int(game_id),
                         "game_title": game.get("Title") or game.get("title") or "Unknown Game",
                         "game_image": image,
+                        "console": game.get("ConsoleName") or game.get("consoleName"),
                         "hardcore_achievements": int(game.get("NumAwardedHardcore") or game.get("numAwardedHardcore") or 0),
                         "total_achievements": int(game.get("MaxPossible") or game.get("maxPossible") or 0),
                         "awarded_at": awarded_at,
