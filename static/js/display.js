@@ -176,7 +176,7 @@
   };
 
   const enableDisplayAudio = async () => {
-    if (!audioEnabled || audioMuted) return;
+    if (!audioEnabled || audioMuted || event.mute_sound) return;
 
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -383,6 +383,7 @@
   const renderAchievementNotification = (event) => {
     notification.classList.remove('is-mastery');
     notification.classList.remove('is-beaten');
+    notification.classList.remove('is-catchup');
     setText('[data-achievement-heading]', 'Achievement Unlocked');
     setText('[data-achievement-mode]', 'Hardcore');
     setImage('[data-achievement-user-avatar]', event.avatar, `${event.username} avatar`);
@@ -398,6 +399,7 @@
 
   const renderMasteryNotification = (event) => {
     notification.classList.remove('is-beaten');
+    notification.classList.remove('is-catchup');
     notification.classList.add('is-mastery');
     setText('[data-achievement-heading]', 'MASTERED');
     setText('[data-achievement-mode]', 'Mastery');
@@ -417,6 +419,7 @@
 
   const renderBeatenNotification = (event) => {
     notification.classList.remove('is-mastery');
+    notification.classList.remove('is-catchup');
     notification.classList.add('is-beaten');
     setText('[data-achievement-heading]', 'Game Beaten');
     setText('[data-achievement-mode]', 'Hardcore');
@@ -442,6 +445,27 @@
     );
   };
 
+  const renderCatchupNotification = (event) => {
+    notification.classList.remove('is-mastery', 'is-beaten');
+    notification.classList.add('is-catchup');
+    const milestones = [];
+    if (event.beaten_count) milestones.push(`${event.beaten_count} ${event.beaten_count === 1 ? 'game' : 'games'} beaten`);
+    if (event.mastery_count) milestones.push(`${event.mastery_count} ${event.mastery_count === 1 ? 'game' : 'games'} mastered`);
+    setText('[data-achievement-heading]', 'While You Were Away');
+    setText('[data-achievement-mode]', 'Hardcore recap');
+    setImage('[data-achievement-user-avatar]', event.avatar, `${event.username} avatar`);
+    setImage('[data-achievement-badge]', null);
+    setText('[data-achievement-username]', event.username);
+    setText('[data-achievement-title]', event.achievement_count
+      ? `${event.achievement_count} ${event.achievement_count === 1 ? 'achievement' : 'achievements'} unlocked`
+      : 'Game milestones');
+    setText('[data-achievement-description]', milestones.join(' · '));
+    setText('[data-achievement-game]', '');
+    setText('[data-achievement-points]', event.achievement_count ? `+${event.points_display} HC Points` : '');
+    setText('[data-achievement-retro-points]', event.retro_points ? `(${event.retro_points_display} RetroPoints)` : '');
+    setNotificationProgress(null, null);
+  };
+
   const showNextNotification = () => {
     if (!notification || notificationActive || notificationQueue.length === 0) return;
 
@@ -455,12 +479,14 @@
       renderMasteryNotification(event);
     } else if (eventType === 'beaten') {
       renderBeatenNotification(event);
+    } else if (eventType === 'catchup') {
+      renderCatchupNotification(event);
     } else {
       renderAchievementNotification(event);
     }
 
     notification.classList.add('is-visible');
-    playAchievementSound(eventType, event);
+    if (eventType !== 'catchup') playAchievementSound(eventType, event);
 
     window.setTimeout(() => {
       notification.classList.remove('is-visible');
@@ -490,6 +516,7 @@
     events.addEventListener('achievement', enqueueEvent);
     events.addEventListener('beaten', enqueueEvent);
     events.addEventListener('mastery', enqueueEvent);
+    events.addEventListener('catchup', enqueueEvent);
     events.addEventListener('display-scale', (message) => {
       try {
         applyDisplayScale(JSON.parse(message.data).scale);
@@ -709,7 +736,11 @@
     }
   });
   updateInstallButton?.addEventListener('click', async () => {
-    if (updateRunning || !window.confirm('Install this update and restart LeftoverAchievements?')) return;
+    if (updateRunning || !await window.appConfirm({
+      title: 'Install update?',
+      message: 'LeftoverAchievements will restart when the update is ready.',
+      confirmLabel: 'Install Update',
+    })) return;
     updateInstallButton.disabled = true;
     try {
       await updateRequest('/api/update/install', { method: 'POST' });

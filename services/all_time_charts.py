@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone, time
+from datetime import date, datetime, timedelta, timezone, time
+from urllib.parse import urljoin
 
 import aiohttp
 
@@ -12,6 +13,10 @@ from .background_tasks import create_logged_task
 logger = logging.getLogger(__name__)
 REFRESH_INTERVAL = timedelta(hours=1)
 FAILURE_RETRY_INTERVAL = timedelta(minutes=5)
+WEEKDAY_LABELS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+MONTH_LABELS = ("January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December")
+RA_BASE_URL = "https://retroachievements.org"
 
 
 def parse_date(value):
@@ -51,14 +56,32 @@ def daily_points(achievements, start, end):
                 continue
             seen.add(achievement_id)
         day = earned.astimezone().date().isoformat()
-        row = days.setdefault(day, {"hardcore_points": 0, "retro_points": 0, "achievements_earned": 0})
+        row = days.setdefault(day, {"hardcore_points": 0, "retro_points": 0,
+                                    "achievements_earned": 0, "games": {}})
         row["hardcore_points"] += int(achievement.get("Points") or achievement.get("points") or 0)
         row["retro_points"] += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
         row["achievements_earned"] += 1
+        game_id = int(achievement.get("GameID") or achievement.get("gameId") or 0)
+        if game_id:
+            game_image = achievement.get("GameIcon") or achievement.get("gameIcon")
+            game = row["games"].setdefault(game_id, {
+                "game_id": game_id,
+                "game_title": achievement.get("GameTitle") or achievement.get("gameTitle") or f"Game #{game_id}",
+                "game_image": urljoin(RA_BASE_URL, game_image) if game_image else None,
+                "console": achievement.get("ConsoleName") or achievement.get("consoleName"),
+                "achievements_earned": 0,
+                "hardcore_points": 0,
+                "retro_points": 0,
+            })
+            game["achievements_earned"] += 1
+            game["hardcore_points"] += int(achievement.get("Points") or achievement.get("points") or 0)
+            game["retro_points"] += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
         points = int(achievement.get("Points") or achievement.get("points") or 0)
         if points > 0 and (not row.get("first_achievement_at") or earned < parse_date(row["first_achievement_at"])):
             row.update(first_achievement_at=earned.isoformat(), first_hardcore_points=points,
                        first_retro_points=int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0))
+    for row in days.values():
+        row["games"] = sorted(row["games"].values(), key=lambda game: game["game_title"].lower())
     return days
 
 
@@ -107,7 +130,9 @@ def week_stats(profile, months, start, end):
     """Return cached range stats only when every overlapping month is covered."""
     joined = parse_date(profile["member_since"])
     stats = {"hardcore_points": 0, "retro_points": 0, "achievements_earned": 0}
+    games = {}
     if end < joined:
+        stats["played_games"] = []
         return stats
     for month, _, required_end in month_ranges(max(start, joined), end):
         row = months.get(month.date().isoformat())
@@ -117,7 +142,75 @@ def week_stats(profile, months, start, end):
             if start.astimezone().date().isoformat() <= day <= end.astimezone().date().isoformat():
                 for field in stats:
                     stats[field] += values[field]
+                if "games" not in values:
+                    return None
+                for game in values["games"]:
+                    combined = games.setdefault(game["game_id"], {
+                        **game, "achievements_earned": 0, "hardcore_points": 0, "retro_points": 0,
+                    })
+                    for field in ("achievements_earned", "hardcore_points", "retro_points"):
+                        combined[field] += int(game.get(field) or 0)
+                    if not combined.get("game_image") and game.get("game_image"):
+                        combined["game_image"] = game["game_image"]
+                    if not combined.get("console") and game.get("console"):
+                        combined["console"] = game["console"]
+    stats["played_games"] = sorted(games.values(), key=lambda game: game["game_title"].lower())
     return stats
+
+
+def weekday_achievement_activity(completed_users):
+    """Average hardcore unlocks for each weekday across eligible player-days."""
+    totals = [0] * 7
+    eligible_days = [0] * 7
+    for joined, as_of, rows in completed_users:
+        first_day = joined.astimezone().date()
+        last_day = as_of.astimezone().date()
+        current = first_day
+        while current <= last_day:
+            eligible_days[current.weekday()] += 1
+            current += timedelta(days=1)
+        for row in rows.values():
+            for day, values in (row.get("days") or {}).items():
+                earned_day = date.fromisoformat(day)
+                if first_day <= earned_day <= last_day:
+                    totals[earned_day.weekday()] += int(values.get("achievements_earned") or 0)
+    return [
+        {
+            "weekday": label,
+            "achievements_earned": totals[index],
+            "eligible_days": eligible_days[index],
+            "average": totals[index] / eligible_days[index] if eligible_days[index] else 0,
+        }
+        for index, label in enumerate(WEEKDAY_LABELS)
+    ]
+
+
+def monthly_achievement_activity(completed_users):
+    """Average hardcore unlocks for each month across eligible player-months."""
+    totals = [0] * 12
+    eligible_months = [0] * 12
+    for joined, as_of, rows in completed_users:
+        first_day = joined.astimezone().date()
+        last_day = as_of.astimezone().date()
+        current = first_day.replace(day=1)
+        final_month = last_day.replace(day=1)
+        while current <= final_month:
+            eligible_months[current.month - 1] += 1
+            current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+        for row in rows.values():
+            for day, values in (row.get("days") or {}).items():
+                earned_day = date.fromisoformat(day)
+                if first_day <= earned_day <= last_day:
+                    totals[earned_day.month - 1] += int(values.get("achievements_earned") or 0)
+    return [
+        {
+            "month": label,
+            "achievements_earned": totals[index],
+            "eligible_months": eligible_months[index],
+            "average": totals[index] / eligible_months[index] if eligible_months[index] else 0,
+        }
+        for index, label in enumerate(MONTH_LABELS)
+    ]
 
 
 class AllTimeCharts:
@@ -134,6 +227,8 @@ class AllTimeCharts:
     def month_is_fresh(row, end, now):
         if not row or row.get("days") is None:
             return False
+        if any("games" not in values for values in row["days"].values()):
+            return False
         covered = parse_date(row["covered_through"])
         return covered >= end or (end == now and now - covered < REFRESH_INTERVAL)
 
@@ -143,6 +238,7 @@ class AllTimeCharts:
         masteries = self.db.get_recorded_chart_masteries([user["ra_username"] for user in users], now)
         beaten = self.db.get_recorded_chart_beaten_games([user["ra_username"] for user in users], now)
         series = []
+        completed_activity_users = []
         needs_refresh = False
         oldest = None
         for user in users:
@@ -202,6 +298,7 @@ class AllTimeCharts:
                     start = parse_date(points[0]["date"])
                     oldest = min(oldest, start) if oldest else start
                 result.update(points=points, ready=True)
+                completed_activity_users.append((joined, min(now, parse_date(cached["refreshed_at"])), rows))
             else:
                 needs_refresh = True
             if now - parse_date(cached["refreshed_at"]) >= REFRESH_INTERVAL:
@@ -211,7 +308,9 @@ class AllTimeCharts:
                 "end": now.isoformat(), "needs_refresh": needs_refresh,
                 "building": bool(self.task and not self.task.done()),
                 "progress": dict(self.progress),
-                "ready_users": sum(item["ready"] for item in series)}
+                "ready_users": sum(item["ready"] for item in series),
+                "weekday_activity": weekday_achievement_activity(completed_activity_users),
+                "monthly_activity": monthly_achievement_activity(completed_activity_users)}
 
     def schedule(self, users, force=False):
         if not users or (self.task and not self.task.done()):
@@ -308,7 +407,7 @@ class AllTimeCharts:
             monday = joined - timedelta(days=joined.weekday())
             key = profile_key(profile)
             rows = months.get(key, {})
-            existing = self.db.get_history_user_weeks(key)
+            existing = self.db.get_history_user_weeks_with_games(key)
             snapshots = []
             while monday < current_monday:
                 following = monday + timedelta(days=7)

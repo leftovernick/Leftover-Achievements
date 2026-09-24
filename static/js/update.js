@@ -97,7 +97,11 @@
   });
 
   installButton.addEventListener('click', async () => {
-    if (updateRunning || !window.confirm('Install this update and restart LeftoverAchievements?')) return;
+    if (updateRunning || !await window.appConfirm({
+      title: 'Install update?',
+      message: 'LeftoverAchievements will restart when the update is ready.',
+      confirmLabel: 'Install Update',
+    })) return;
     installButton.disabled = true;
     try { await request('/api/update/install', { method: 'POST' }); }
     catch (requestError) { error.hidden = false; error.textContent = requestError.message; installButton.disabled = false; }

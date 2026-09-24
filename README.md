@@ -83,13 +83,13 @@ and dated unlocks from the [date-range API](https://api-docs.retroachievements.o
 The macOS and Windows packages include Python and all runtime dependencies. They run
 LeftoverAchievements as a local server without kiosk mode, a dashboard window, or an
 automatically opened browser. On macOS, launching the app creates a native monochrome
-trophy in the menu bar and no Dock icon. Its menu reports server and update status,
-opens the Dashboard or Display in the default browser, copies the preferred LAN
-address, checks for updates, and quits the backend cleanly. Windows continues to run
-as a headless server. Open http://127.0.0.1:8000/ yourself on Windows, or use the
-macOS menu command. Other devices on the same trusted LAN can use the LAN address
-recorded in the application log. `/display` remains available when a desktop user
-intentionally opens it.
+trophy in the menu bar and no Dock icon. On Windows, it creates a system tray icon.
+Both menus report server and update status, open the Dashboard in the default browser
+or the Display in a native window, copy the preferred LAN address, check for updates,
+and quit the backend cleanly. Other devices on the same trusted LAN can use the LAN
+address recorded in the application log. `/display` remains available in a browser.
+Closing the native Display window leaves the server running; choose **Open Display
+Window** from the menu bar or system tray to reopen it.
 
 First launch uses the same browser-based onboarding as the Pi. The API key, users,
 settings, history, custom audio, and database are persisted outside the package:
@@ -101,8 +101,8 @@ Rotating logs are stored in the `logs` subdirectory as
 `leftover-achievements.log`. The log records the localhost URL, detected LAN URL,
 startup errors, and shutdown without recording API keys. Launching a second copy
 exits cleanly when the instance lock is already owned. On macOS, a backend startup
-failure leaves the menu bar app available with `Server: Failed` instead of appearing
-as an unresponsive foreground app.
+failure leaves the menu bar or tray app available with `Server: Failed` instead of
+appearing as an unresponsive foreground app.
 
 Packaged builds can check GitHub Releases and show newer versions. Self-replacement
 is deliberately not implemented yet: **Update Now** is hidden and Settings explains
@@ -117,8 +117,9 @@ Install the build-only dependencies in the project virtual environment:
 pip install -r requirements-build.txt
 ```
 
-On macOS, the runtime requirements install PyObjC/AppKit. To exercise the menu bar
-wrapper without building an `.app`, use packaged-style data isolation on a free port:
+On macOS, the runtime requirements install PyObjC/AppKit and WebKit. To exercise
+the menu bar wrapper without building an `.app`, use packaged-style data isolation
+on a free port:
 
 ```bash
 LEFTOVER_RUNTIME_MODE=macos_packaged \
@@ -127,7 +128,7 @@ python macos_menu.py
 ```
 
 This does not replace the normal `uvicorn` development command. The wrapper does not
-open a browser automatically; choose **Open Dashboard** or **Open Display** from its
+open a browser automatically; choose **Open Dashboard** or **Open Display Window** from its
 menu. Its status icon uses the system `trophy.fill` symbol as a template image, so no
 separate colored menu-bar asset is required and macOS adapts it for light/dark menus.
 
@@ -139,6 +140,24 @@ not ask at launch, a denial does not affect the server or display, and display p
 audio remains a separate preference. Each RetroAchievements event is notified at
 most once, and each available release version is announced once. Clicking a
 notification opens the local dashboard.
+
+On Windows, the tray icon also delivers native notifications for the same four
+categories. Configure them in **Settings → Notifications**. Windows must have the
+Microsoft Edge WebView2 Runtime to open the native Display window. To run the tray
+app directly from a Windows checkout without packaging it:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:LEFTOVER_RUNTIME_MODE = "windows_packaged"
+.venv\Scripts\python.exe windows_tray.py
+```
+
+**Users → Tracked Players** separates audio from interrupts for each player. Muting
+audio keeps the visual interrupt and desktop notification while silencing both.
+You can hide all interrupts or
+hide achievement, beaten-game, and mastery interrupts independently. Hiding an
+interrupt also suppresses its desktop notification. Muted events still update scores
+and history.
 
 Build on the target operating system; PyInstaller does not cross-compile. Both build
 scripts derive the version from the exact Git tag at HEAD. CI or a test build may

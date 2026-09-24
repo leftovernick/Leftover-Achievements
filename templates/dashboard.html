@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Dashboard</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=brand-2" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=activity-consoles-1" />
   </head>
   <body class="web-dashboard">
     <header class="top-nav">
@@ -53,6 +53,7 @@
                   {% if player.profile_ulid %}<a class="username user-link" href="/users/{{ player.profile_ulid }}">{{ player.username }}</a>{% else %}<span class="username">{{ player.username }}</span>{% endif %}
                 </div>
                 <h3>{{ player.game_title }}</h3>
+                {% if player.console %}<p class="current-console">{{ player.console }}</p>{% endif %}
                 <p class="rich-presence">{{ player.rich_presence }}</p>
                 <div class="game-progress">
                   <div>
@@ -154,7 +155,10 @@
                 <strong>{{ activity.achievement_title }}</strong>
                 <span>{{ activity.achievement_description }}</span>
               </td>
-              <td>{{ activity.game_title }} #{{ activity.game_id }}</td>
+              <td>
+                {{ activity.game_title }} #{{ activity.game_id }}
+                {% if activity.console %}<span class="activity-console">{{ activity.console }}</span>{% endif %}
+              </td>
               <td class="points">{{ activity.points_display }}{% if activity.retro_points %}<br><span class="retro-points">({{ activity.retro_points_display }})</span>{% endif %}</td>
               <td><time datetime="{{ activity.unlock_time_iso }}">{{ activity.unlock_time_display }}</time></td>
             </tr>
@@ -164,7 +168,119 @@
           </tbody>
         </table>
       </section>
+
+      <section class="panel weekly-games-panel" data-dashboard-refresh-section="weekly-games">
+        <div class="panel-header">
+          <h2>Played This Week</h2>
+          <span>Since {{ week_start_display }}</span>
+        </div>
+        <div class="weekly-games-grid">
+          {% for player in weekly_played_users %}
+            <article class="weekly-player-games">
+              <div class="player weekly-games-player">
+                {% if player.avatar %}<img src="{{ player.avatar }}" alt="{{ player.username }} avatar" class="avatar small-avatar" />{% endif %}
+                {% if player.ulid %}<a class="username user-link" href="/users/{{ player.ulid }}">{{ player.username }}</a>{% else %}<span class="username">{{ player.username }}</span>{% endif %}
+              </div>
+              <ul>
+                {% for game in player.weekly_games %}
+                  <li>
+                    {% if game.game_image %}<img src="{{ game.game_image }}" alt="" class="weekly-game-image" />{% endif %}
+                    <div>
+                      <a href="https://retroachievements.org/game/{{ game.game_id }}" target="_blank" rel="noopener noreferrer">{{ game.game_title }}</a>
+                      <span>{{ game.achievements_display }} achievement{{ '' if game.achievements_earned == 1 else 's' }} · <strong>+{{ game.hardcore_points_display }}</strong> <span class="retro-points">({{ game.retro_points_display }})</span></span>
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+            </article>
+          {% else %}
+            <div class="empty">No Hardcore achievements earned in a game this week yet.</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="weekly-category-grid" data-dashboard-refresh-section="weekly-categories">
+        <div class="panel weekly-category-controls">
+          <div class="panel-header">
+            <h2>Most Played</h2>
+            <fieldset class="chart-range" aria-label="Most played time range">
+              <legend>Range</legend>
+              <div>
+                <button type="button" data-category-scope="weekly" class="active" aria-pressed="true">This Week</button>
+                <button type="button" data-category-scope="all-time" aria-pressed="false">All Time</button>
+              </div>
+            </fieldset>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Most Played Consoles</h2>
+            <span data-category-period>This week</span>
+          </div>
+          <table class="leaderboard compact-table weekly-category-table">
+            <thead><tr><th>Console</th><th>Players</th><th>Games</th></tr></thead>
+            <tbody data-category-content="weekly">
+              {% for category in weekly_consoles %}
+                <tr><td><strong>{{ category.name }}</strong></td><td>{{ category.player_count }}</td><td>{{ category.game_count }}</td></tr>
+              {% else %}
+                <tr><td colspan="3" class="empty">No console activity this week yet.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tbody data-category-content="all-time" hidden>
+              {% for category in all_time_consoles %}
+                <tr><td><strong>{{ category.name }}</strong></td><td>{{ category.player_count }}</td><td>{{ category.game_count }}</td></tr>
+              {% else %}
+                <tr><td colspan="3" class="empty">{{ 'All-time libraries are loading.' if game_library_building else 'No all-time console activity is cached yet.' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Most Played Genres</h2>
+            <span data-category-period>This week</span>
+          </div>
+          <table class="leaderboard compact-table weekly-category-table">
+            <thead><tr><th>Genre</th><th>Players</th><th>Games</th></tr></thead>
+            <tbody data-category-content="weekly">
+              {% for category in weekly_genres %}
+                <tr><td><strong>{{ category.name }}</strong></td><td>{{ category.player_count }}</td><td>{{ category.game_count }}</td></tr>
+              {% else %}
+                <tr><td colspan="3" class="empty">Genre metadata is still loading.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tbody data-category-content="all-time" hidden>
+              {% for category in all_time_genres %}
+                <tr><td><strong>{{ category.name }}</strong></td><td>{{ category.player_count }}</td><td>{{ category.game_count }}</td></tr>
+              {% else %}
+                <tr><td colspan="3" class="empty">{{ 'All-time genre metadata is loading.' if game_library_building else 'No all-time genre metadata is cached yet.' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel shared-games-panel">
+          <div class="panel-header">
+            <h2>Most Shared Games</h2>
+            <span>All time</span>
+          </div>
+          <div class="shared-games-list">
+            {% for game in all_time_shared_games %}
+              <article>
+                {% if game.game_image %}<img src="{{ game.game_image }}" alt="" />{% endif %}
+                <div>
+                  <a href="https://retroachievements.org/game/{{ game.game_id }}" target="_blank" rel="noopener noreferrer">{{ game.game_title }}</a>
+                  <span>{{ game.player_count }} players · {{ '%.1f'|format(game.average_completion) }}% average Hardcore completion</span>
+                </div>
+              </article>
+            {% else %}
+              <div class="empty">{{ 'All-time libraries are loading.' if game_library_building else 'No game is shared by multiple tracked players.' }}</div>
+            {% endfor %}
+          </div>
+        </div>
+        <p class="weekly-category-note" data-category-note="weekly">Based on games with at least one Hardcore achievement this week. Games played without an unlock are not available in the existing weekly feed.</p>
+        <p class="weekly-category-note" data-category-note="all-time" hidden>All-time uses each player’s completion-progress library, including games reported with zero earned achievements. Genre metadata is cached once per game and may take time to finish loading.</p>
+      </section>
     </main>
-    <script src="/static/js/app.js?v=live-activity-1"></script>
+    <script src="/static/js/app.js?v=category-scope-1"></script>
   </body>
 </html>

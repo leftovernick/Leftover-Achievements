@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements History</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=brand-2" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=history-games-1" />
   </head>
   <body class="web-dashboard history-page">
     <header class="top-nav">
@@ -106,6 +106,38 @@
                 {% endfor %}
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          <section class="panel history-games-panel">
+            <div class="panel-header">
+              <h2>Games Played</h2>
+              <span>{{ selected_week_label }}</span>
+            </div>
+            <div class="history-game-users">
+              {% for player in played_game_users %}
+                <section class="history-game-user">
+                  <div class="player history-game-player">
+                    {% if player.avatar %}<img src="{{ player.avatar }}" alt="{{ player.canonical_username }} avatar" class="avatar small-avatar" />{% endif %}
+                    {% if player.ra_ulid %}<a class="username user-link" href="/users/{{ player.ra_ulid }}">{{ player.canonical_username }}</a>{% else %}<span class="username">{{ player.canonical_username }}</span>{% endif %}
+                  </div>
+                  <div class="history-game-list">
+                    {% for game in player.played_games %}
+                      <article class="history-game-card">
+                        {% if game.game_image %}<img src="{{ game.game_image }}" alt="" />{% endif %}
+                        <div>
+                          <a href="https://retroachievements.org/game/{{ game.game_id }}" target="_blank" rel="noopener noreferrer">{{ game.game_title }}</a>
+                          {% if game.console %}<span>{{ game.console }}</span>{% endif %}
+                          <span>{{ game.achievements_earned }} HC achievement{{ '' if game.achievements_earned == 1 else 's' }}</span>
+                          <strong>+{{ game.hardcore_points_display }} ({{ game.retro_points_display }})</strong>
+                        </div>
+                      </article>
+                    {% endfor %}
+                  </div>
+                </section>
+              {% else %}
+                <div class="empty">{{ 'Historical game details are still being built.' if backfill_pending else 'No Hardcore achievements were earned in games this week.' }}</div>
+              {% endfor %}
             </div>
           </section>
 

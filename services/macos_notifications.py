@@ -131,7 +131,7 @@ class UserNotificationsPlatform:
         content = self._content_class.alloc().init()
         content.setTitle_(title)
         content.setBody_(body)
-        content.setSound_(self._default_sound)
+        content.setSound_(None if (user_info or {}).get("mute_sound") else self._default_sound)
         content.setUserInfo_(user_info or {"url": self._dashboard_url})
         request = self._request_class.requestWithIdentifier_content_trigger_(
             identifier, content, None
@@ -181,6 +181,10 @@ class MacOSNotificationService:
     @property
     def supported(self) -> bool:
         return self.runtime.mode is RuntimeMode.MACOS_PACKAGED
+
+    @property
+    def settings_prefix(self) -> str:
+        return "macos_notifications"
 
     def preferences(self) -> dict[str, Any]:
         categories = {
@@ -265,7 +269,8 @@ class MacOSNotificationService:
             body = f"{username} mastered {game}"
 
         return await self._deliver(
-            f"event:{category}:{dedupe_key}", category, title, body
+            f"event:{category}:{dedupe_key}", category, title, body,
+            mute_sound=bool(event.get("mute_sound")),
         )
 
     async def notify_update(self, state: dict[str, Any]) -> bool:
@@ -275,7 +280,7 @@ class MacOSNotificationService:
         if not version:
             return False
         version = str(version)
-        if self.settings.get_setting("macos_notifications_last_update_version") == version:
+        if self.settings.get_setting(f"{self.settings_prefix}_last_update_version") == version:
             return False
         delivered = await self._deliver(
             f"update:{version}",
@@ -284,11 +289,12 @@ class MacOSNotificationService:
             f"Version {version} is ready to download.",
         )
         if delivered or self.settings.native_notification_delivered(f"update:{version}"):
-            self.settings.set_setting("macos_notifications_last_update_version", version)
+            self.settings.set_setting(f"{self.settings_prefix}_last_update_version", version)
         return delivered
 
     async def _deliver(
-        self, dedupe_key: str, category: str, title: str, body: str
+        self, dedupe_key: str, category: str, title: str, body: str,
+        mute_sound: bool = False,
     ) -> bool:
         reserved = False
         try:
@@ -309,11 +315,14 @@ class MacOSNotificationService:
             if await self._native_platform().authorization_status() not in AUTHORIZED_STATUSES:
                 return False
             identifier = "leftover-" + hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest()
-            await self._native_platform().send(identifier, title, body)
+            await self._native_platform().send(
+                identifier, title, body,
+                {"mute_sound": True} if mute_sound else None,
+            )
             self.settings.mark_native_notification_delivered(dedupe_key)
             return True
         except Exception as exc:
-            self._log_failure("delivery", "Could not deliver a macOS notification", exc)
+            self._log_failure("delivery", "Could not deliver a native notification", exc)
             return False
         finally:
             if reserved:

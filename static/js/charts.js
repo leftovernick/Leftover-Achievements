@@ -4,6 +4,11 @@
   const emptyState = document.querySelector("[data-chart-empty]");
   const errorState = document.querySelector("[data-chart-error]");
   const coverageLabels = document.querySelectorAll("[data-chart-coverage]");
+  const activityPanel = document.querySelector('[data-chart-activity]');
+  const activityCoverage = document.querySelector('[data-activity-coverage]');
+  const activityTitle = document.querySelector('[data-activity-title]');
+  const activityNote = document.querySelector('[data-activity-note]');
+  const activityViewButtons = [...document.querySelectorAll('[data-activity-view]')];
   const charts = {};
   const awardLogos = new Map();
   let logoRedrawPending = false;
@@ -63,6 +68,7 @@
   const visibleAwards = { mastery: true, beaten: true };
   let selectedMetric = 'hardcore_points';
   let selectedView = 'fit';
+  let selectedActivityView = 'weekday';
   let timelineStart;
   let timelineMaxScroll = 0;
   let timelineFrame;
@@ -223,6 +229,63 @@
       type: "line",
       data: { labels, datasets: seriesFromWeeks(weeks, "rank") },
       options: rankOptions,
+    });
+  }
+
+  function renderActivity(data) {
+    const monthly = selectedActivityView === 'monthly';
+    const activity = (monthly ? data.monthly_activity : data.weekday_activity) || [];
+    const coverageField = monthly ? 'eligible_months' : 'eligible_days';
+    const periodLabel = monthly ? 'player-months' : 'player-days';
+    const hasCoverage = activity.some((period) => period[coverageField] > 0);
+    activityPanel.hidden = !hasCoverage;
+    if (!hasCoverage) {
+      if (charts.activity) charts.activity.destroy();
+      delete charts.activity;
+      return;
+    }
+    activityViewButtons.forEach((button) => {
+      const active = button.dataset.activityView === selectedActivityView;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    const playerLabel = `${data.ready_users} player${data.ready_users === 1 ? '' : 's'}`;
+    const periods = activity.reduce((sum, period) => sum + period[coverageField], 0);
+    activityTitle.textContent = monthly ? 'Achievements Earned by Month' : 'Achievements Earned by Day of Week';
+    activityCoverage.textContent = `${playerLabel} · ${periods.toLocaleString()} ${periodLabel}`;
+    activityNote.textContent = monthly
+      ? "Average Hardcore achievements per eligible player-month, including months with no unlocks. Months use the server's local calendar."
+      : "Average Hardcore achievements per eligible player-day, including days with no unlocks. Weekdays use the server's local calendar.";
+    const options = baseOptions();
+    options.plugins.legend.display = false;
+    options.plugins.tooltip.callbacks = {
+      label(context) {
+        return `Average: ${context.parsed.y.toFixed(2)} achievements per player`;
+      },
+      afterLabel(context) {
+        const period = activity[context.dataIndex];
+        return `${period.achievements_earned.toLocaleString()} achievements across ${period[coverageField].toLocaleString()} ${periodLabel}`;
+      },
+    };
+    options.scales.x.title = { display: true, text: monthly ? 'Month' : 'Day of week' };
+    if (monthly) options.scales.x.ticks.maxTicksLimit = 12;
+    options.scales.y.title = { display: true, text: `Average achievements per ${monthly ? 'player-month' : 'player-day'}` };
+    options.scales.y.ticks = {
+      callback: (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    };
+    replaceChart('activity', 'achievement-activity-chart', {
+      type: 'bar',
+      data: {
+        labels: activity.map((period) => monthly ? period.month : period.weekday),
+        datasets: [{
+          data: activity.map((period) => period.average),
+          backgroundColor: 'rgba(255, 207, 33, 0.72)',
+          borderColor: '#ffcf21',
+          borderWidth: 1,
+          borderRadius: 4,
+        }],
+      },
+      options,
     });
   }
 
@@ -433,6 +496,7 @@
 
   function renderAllTime(data) {
     allTimeData = data;
+    renderActivity(data);
     const metricLabel = selectedMetric === 'hardcore_points' ? 'Hardcore Points' : 'RetroPoints';
     document.querySelector('[data-all-time-title]').textContent = `All-Time ${metricLabel}`;
     const pending = data.users.filter((user) => !user.ready).map((user) => user.username);
@@ -665,6 +729,10 @@
   rangeButtons.forEach((button) => {
     button.addEventListener("click", () => loadRange(button.dataset.chartRange));
   });
+  activityViewButtons.forEach((button) => button.addEventListener('click', () => {
+    selectedActivityView = button.dataset.activityView;
+    if (allTimeData) renderActivity(allTimeData);
+  }));
   metricButtons.forEach((button) => button.addEventListener('click', () => {
     stopPlayback(true);
     selectedMetric = button.dataset.chartMetric;

@@ -6,6 +6,7 @@ import re
 import base64
 import io
 import socket
+from contextvars import ContextVar
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,7 @@ from database import database as db
 from services.background_tasks import create_logged_task
 from services.all_time_charts import AllTimeCharts
 from services.macos_notifications import MacOSNotificationService
+from services.windows_notifications import WindowsNotificationService
 from services.retroachievements import RetroAchievements
 from services.updater import ApplicationUpdater, UpdateError
 
@@ -65,11 +67,14 @@ legacy_environment_api_key = None if runtime.is_packaged else os.getenv("RA_API_
 ra_client = RetroAchievements(api_key=db.get_setting("ra_api_key") or legacy_environment_api_key)
 all_time_charts = AllTimeCharts(ra_client, db)
 macos_notification_service = MacOSNotificationService(runtime, db)
+windows_notification_service = WindowsNotificationService(runtime, db)
+native_notification_services = (macos_notification_service, windows_notification_service)
 
 
 async def notify_about_update(state: dict):
     try:
-        await macos_notification_service.notify_update(state)
+        for service in native_notification_services:
+            await service.notify_update(state)
     finally:
         broadcast_display_update_state(state)
 
@@ -82,11 +87,13 @@ application_updater = ApplicationUpdater(
 RECENT_ACTIVITY_LIMIT = 5
 RECENT_ACTIVITY_FETCH_MINUTES = 43200
 WEEKLY_CACHE_TTL = timedelta(minutes=10)
+GAME_LIBRARY_CACHE_TTL = timedelta(hours=24)
 PROFILE_CACHE_TTL = timedelta(minutes=5)
 CURRENTLY_PLAYING_CACHE_TTL = timedelta(seconds=75)
 CURRENTLY_PLAYING_STALE_MAX = timedelta(minutes=10)
 profile_detail_retry_at: dict[tuple[str, str], datetime] = {}
 weekly_refresh_task = None
+game_library_refresh_task = None
 history_backfill_task = None
 history_refresh_live_requested = False
 history_backfill_status = {
@@ -112,6 +119,9 @@ display_shutdown_event = asyncio.Event()
 SSE_HEARTBEAT_SECONDS = 15
 POLL_CYCLE_SECONDS = 60
 MIN_ACHIEVEMENT_POLL_LOOKBACK_MINUTES = 60
+CATCHUP_AGE = timedelta(minutes=5)
+CATCHUP_QUEUE_THRESHOLD = 5
+pending_poll_interrupts: ContextVar[list[dict] | None] = ContextVar("pending_poll_interrupts", default=None)
 DEFAULT_NOTIFICATION_SECONDS = {
     "achievement": 5,
     "beaten": 7,
@@ -406,6 +416,7 @@ async def backfill_history_user(user: dict, ranges: list[tuple[datetime, datetim
                 "hardcore_points": stats.get("hardcore_points", 0),
                 "retro_points": stats.get("retro_points", 0),
                 "achievements_earned": stats.get("achievements_earned", 0),
+                "played_games": stats.get("played_games"),
                 # The official range API exposes unlocks, not historical award transitions.
                 "beaten_count": None,
                 "mastery_count": None,
@@ -460,7 +471,7 @@ async def ensure_history_backfill():
     missing_by_user = []
     for user in users:
         user_key = history_user_key(user)
-        existing_weeks = db.get_history_user_weeks(user_key)
+        existing_weeks = db.get_history_user_weeks_with_games(user_key)
         missing_ranges = [
             (start, end)
             for start, end in ranges
@@ -517,6 +528,7 @@ async def ensure_history_backfill():
                     stats.get("hardcore_points", 0),
                     stats.get("retro_points", 0),
                     week_start.isoformat(),
+                    stats.get("played_games", []),
                 )
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
                 history_backfill_status["live_failed"] += 1
@@ -792,7 +804,10 @@ def weekly_cache_needs_refresh(users: list[dict], weekly_cache: dict) -> bool:
 
     for user in users:
         cached = weekly_cache.get(user["ra_username"].lower())
-        if not cached or cache_is_stale(cached.get("refreshed_at"), WEEKLY_CACHE_TTL):
+        if (not cached or cached.get("played_games") is None
+                or any("console" not in game or "game_image" not in game
+                       for game in (cached.get("played_games") or []))
+                or cache_is_stale(cached.get("refreshed_at"), WEEKLY_CACHE_TTL)):
             return True
 
     return False
@@ -812,11 +827,58 @@ async def refresh_weekly_rankings(users: list[dict], week_start: datetime, week_
                 "ra_username": username,
                 "hardcore_points": points.get("hardcore_points", 0),
                 "retro_points": points.get("retro_points", 0),
+                "played_games": points.get("played_games", []),
             }
         )
 
     if rankings:
         db.save_weekly_rankings(rankings, week_start.isoformat())
+        game_ids = {game["game_id"] for ranking in rankings for game in ranking["played_games"]}
+        cached_metadata = db.get_game_metadata(game_ids)
+        for game_id in sorted(game_ids - set(cached_metadata)):
+            try:
+                db.save_game_metadata(await ra_client.game_summary(game_id))
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                logger.warning("Could not load metadata for game %s: %s: %s", game_id, type(exc).__name__, exc)
+
+
+def schedule_game_library_refresh_if_needed(users: list[dict], libraries: dict):
+    global game_library_refresh_task
+    if not users or (game_library_refresh_task and not game_library_refresh_task.done()):
+        return
+    pending = []
+    for user in users:
+        library = libraries.get(user["ra_username"].lower())
+        games = (library or {}).get("games", [])
+        missing_completion_data = any(
+            "hardcore_achievements" not in game
+            or "total_achievements" not in game
+            or "completion_percentage" not in game
+            for game in games
+        )
+        if (not library or missing_completion_data
+                or cache_is_stale(library.get("refreshed_at"), GAME_LIBRARY_CACHE_TTL)):
+            pending.append(user)
+    if pending:
+        game_library_refresh_task = create_logged_task(refresh_game_libraries(pending), "game library refresh")
+
+
+async def refresh_game_libraries(users: list[dict]):
+    all_game_ids = set()
+    for user in users:
+        username = user["ra_username"]
+        try:
+            games = await ra_client.user_game_library(user.get("ra_ulid") or username)
+            db.save_user_game_library(username, games)
+            all_game_ids.update(game["game_id"] for game in games)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning("Could not load game library for %s: %s: %s", username, type(exc).__name__, exc)
+    cached_metadata = db.get_game_metadata(all_game_ids)
+    for game_id in sorted(all_game_ids - set(cached_metadata)):
+        try:
+            db.save_game_metadata(await ra_client.game_summary(game_id))
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning("Could not load all-time metadata for game %s: %s: %s", game_id, type(exc).__name__, exc)
 
 
 def schedule_user_snapshot_refresh_if_needed(users: list[dict], profile_cache: dict):
@@ -899,7 +961,11 @@ async def current_activity_poll_loop():
 def schedule_recent_activity_refresh_if_needed(users: list[dict], recent_activity: list[dict]):
     global recent_activity_refresh_task
 
-    if not users or len(recent_activity) >= RECENT_ACTIVITY_LIMIT:
+    cache_is_complete = (
+        len(recent_activity) >= RECENT_ACTIVITY_LIMIT
+        and all(activity.get("console") for activity in recent_activity)
+    )
+    if not users or cache_is_complete:
         return
 
     if recent_activity_refresh_task and not recent_activity_refresh_task.done():
@@ -970,6 +1036,7 @@ def serialize_achievement_event(activity: dict, progress: dict | None = None) ->
         "achievement_badge": activity.get("achievement_badge"),
         "game_title": activity["game_title"],
         "game_id": activity["game_id"],
+        "console": activity.get("console"),
         "points": activity["points"],
         "points_display": format_points(activity["points"]),
         "retro_points": activity["retro_points"],
@@ -1077,6 +1144,47 @@ def serialize_beaten_game_event(beaten_game: dict, profile: dict | None = None) 
     }
 
 
+def interrupt_is_stale(event: dict, cutoff: datetime) -> bool:
+    timestamp = parse_iso_datetime(event.get("unlock_time_iso") or event.get("awarded_at"))
+    return timestamp is not None and timestamp < cutoff
+
+
+def condense_stale_interrupts(events: list[dict], now: datetime | None = None) -> list[dict]:
+    """Replace a large backlog with one per-user catch-up interrupt."""
+    cutoff = (now or datetime.now(timezone.utc)) - CATCHUP_AGE
+
+    stale_indices = [index for index, event in enumerate(events)
+                     if interrupt_is_stale(event, cutoff)]
+    if len(stale_indices) <= CATCHUP_QUEUE_THRESHOLD:
+        return events
+
+    stale = [events[index] for index in stale_indices]
+    achievements = [event for event in stale if event.get("type") == "achievement"]
+    summary = {
+        "type": "catchup",
+        "dedupe_key": f"catchup:{stale[0].get('dedupe_key')}:{stale[-1].get('dedupe_key')}",
+        "username": stale[0].get("username") or "A tracked player",
+        "ra_username": stale[0].get("ra_username"),
+        "avatar": next((event.get("avatar") for event in stale if event.get("avatar")), None),
+        "achievement_count": len(achievements),
+        "points": sum(int(event.get("points") or 0) for event in achievements),
+        "retro_points": sum(int(event.get("retro_points") or 0) for event in achievements),
+        "beaten_count": sum(event.get("type") == "beaten" for event in stale),
+        "mastery_count": sum(event.get("type") == "mastery" for event in stale),
+        "duration_ms": 10000,
+    }
+    summary["points_display"] = format_points(summary["points"])
+    summary["retro_points_display"] = format_points(summary["retro_points"])
+    stale_set = set(stale_indices)
+    result = []
+    for index, event in enumerate(events):
+        if index == stale_indices[0]:
+            result.append(summary)
+        if index not in stale_set:
+            result.append(event)
+    return result
+
+
 async def achievement_poll_loop():
     while True:
         started_at = asyncio.get_running_loop().time()
@@ -1105,12 +1213,19 @@ async def poll_for_new_achievements():
         elapsed_minutes = (datetime.now(timezone.utc) - last_polled_at).total_seconds() / 60
         lookback_minutes = max(lookback_minutes, int(elapsed_minutes) + 2)
 
+    pending_events = []
+    token = pending_poll_interrupts.set(pending_events)
     try:
         await process_achievement_unlocks_for_user(username, lookback_minutes)
         await process_game_awards_for_user(username)
     finally:
-        # A temporary lookup failure must not let one user block the round robin.
-        db.mark_tracked_user_polled(username)
+        pending_poll_interrupts.reset(token)
+        try:
+            for event in condense_stale_interrupts(pending_events):
+                await publish_display_event(event)
+        finally:
+            # A temporary lookup failure must not let one user block the round robin.
+            db.mark_tracked_user_polled(username)
 
 
 async def process_achievement_unlocks_for_user(username: str, recent_minutes: int = MIN_ACHIEVEMENT_POLL_LOOKBACK_MINUTES):
@@ -1127,12 +1242,21 @@ async def process_achievement_unlocks_for_user(username: str, recent_minutes: in
         return
 
     new_activities = [activity for activity in activities if not db.achievement_unlock_seen(activity["dedupe_key"])]
-    completion_ranges = await achievement_completion_ranges(username, new_activities)
+    cutoff = datetime.now(timezone.utc) - CATCHUP_AGE
+    stale = [activity for activity in new_activities if activity["unlock_time"] < cutoff]
+    stale_keys = {activity["dedupe_key"] for activity in stale}
+    progress_activities = (
+        [activity for activity in new_activities if activity["dedupe_key"] not in stale_keys]
+        if pending_poll_interrupts.get() is not None and len(stale) > CATCHUP_QUEUE_THRESHOLD
+        else new_activities
+    )
+    completion_ranges = await achievement_completion_ranges(username, progress_activities)
     for activity in new_activities:
         db.save_processed_achievement_unlock(activity, announced=True)
         db.save_recent_activity(activity, keep_limit=RECENT_ACTIVITY_LIMIT)
         await publish_display_event(
-            serialize_achievement_event(activity, completion_ranges.get(activity["dedupe_key"]))
+            serialize_achievement_event(activity, completion_ranges.get(activity["dedupe_key"])),
+            ra_username=username,
         )
 
 
@@ -1173,23 +1297,31 @@ async def process_game_awards_for_user(username: str):
     ]
     new_masteries = [mastery for mastery in masteries if not db.mastery_event_seen(mastery["dedupe_key"])]
 
+    pending = pending_poll_interrupts.get()
+    cutoff = datetime.now(timezone.utc) - CATCHUP_AGE
+    stale_count = sum(interrupt_is_stale(event, cutoff) for event in (pending or []))
+    stale_count += sum(interrupt_is_stale(award, cutoff) for award in (*new_beaten_games, *new_masteries))
+    summarize_old_awards = pending is not None and stale_count > CATCHUP_QUEUE_THRESHOLD
+
     # Preserve the poll's natural progression: achievement unlock, then Game Beaten,
     # then the larger Mastery presentation when both awards are new together.
     for beaten_game in new_beaten_games:
-        try:
-            beaten_game = await ra_client.game_award_event_details(username, beaten_game)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-            pass
+        if not summarize_old_awards or not interrupt_is_stale(beaten_game, cutoff):
+            try:
+                beaten_game = await ra_client.game_award_event_details(username, beaten_game)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                pass
         db.save_processed_beaten_game_event(beaten_game, announced=True)
-        await publish_display_event(serialize_beaten_game_event(beaten_game, profile))
+        await publish_display_event(serialize_beaten_game_event(beaten_game, profile), ra_username=username)
 
     for mastery in new_masteries:
-        try:
-            mastery = await ra_client.mastery_event_details(username, mastery)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-            pass
+        if not summarize_old_awards or not interrupt_is_stale(mastery, cutoff):
+            try:
+                mastery = await ra_client.mastery_event_details(username, mastery)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                pass
         db.save_processed_mastery_event(mastery, announced=True)
-        await publish_display_event(serialize_mastery_event(mastery, profile))
+        await publish_display_event(serialize_mastery_event(mastery, profile), ra_username=username)
 
 
 def broadcast_display_event(event: dict) -> None:
@@ -1207,11 +1339,28 @@ def request_display_refresh(reason: str = "settings") -> None:
     broadcast_display_event({"type": "display-refresh", "reason": reason})
 
 
-async def publish_display_event(event: dict):
+async def publish_display_event(event: dict, ra_username: str | None = None):
+    category = event.get("type")
+    if category in {"achievement", "beaten", "mastery", "catchup"}:
+        user_key = ra_username or event.get("ra_username") or event.get("username")
+        preferences = db.get_user_notification_preferences(user_key) if user_key else {}
+        if preferences.get("mute_all") or preferences.get(f"mute_{category}"):
+            broadcast_display_event({"type": "display-data-refresh", "reason": "muted-event"})
+            return
+        event = {
+            **event,
+            "ra_username": user_key,
+            "mute_sound": bool(preferences.get("mute_sound")),
+        }
+    pending = pending_poll_interrupts.get()
+    if pending is not None:
+        pending.append(event)
+        return
     try:
-        await macos_notification_service.notify_event(event)
+        for service in native_notification_services:
+            await service.notify_event(event)
     except Exception:
-        logger.exception("macOS notification handling failed; continuing display delivery.")
+        logger.exception("Native notification handling failed; continuing display delivery.")
 
     event = {**event, "audio_sources": configured_audio_sources()}
     broadcast_display_event(event)
@@ -1439,6 +1588,23 @@ async def history(request: Request, week: str | None = None):
         ranking["hardcore_points_display"] = format_points(ranking["hardcore_points"])
         ranking["retro_points_display"] = format_points(ranking["retro_points"])
 
+    played_game_users = []
+    for ranking in all_rankings:
+        games = ranking.get("played_games") or []
+        if not games:
+            continue
+        played_game_users.append({
+            **ranking,
+            "played_games": [
+                {
+                    **game,
+                    "hardcore_points_display": format_points(game.get("hardcore_points", 0)),
+                    "retro_points_display": format_points(game.get("retro_points", 0)),
+                }
+                for game in games
+            ],
+        })
+
     week_options = [
         {**item, "label": readable_week_range(item["week_start"], item["week_end"])}
         for item in weeks
@@ -1477,6 +1643,7 @@ async def history(request: Request, week: str | None = None):
                 else "No completed weeks"
             ),
             "rankings": rankings,
+            "played_game_users": played_game_users,
             "summary": summary,
             "backfill_pending": backfill_pending,
         },
@@ -1646,6 +1813,11 @@ async def macos_notification_status():
     return await macos_notification_service.status()
 
 
+@app.get("/api/windows-notifications/status")
+async def windows_notification_status():
+    return await windows_notification_service.status()
+
+
 @app.post("/api/update/install", status_code=202)
 async def install_application_update(request: Request):
     origin = request.headers.get("origin")
@@ -1683,6 +1855,7 @@ async def stop_update_polling():
     await application_updater.stop()
     background_tasks = [
         weekly_refresh_task,
+        game_library_refresh_task,
         history_backfill_task,
         user_snapshot_refresh_task,
         current_activity_poll_task,
@@ -1696,6 +1869,60 @@ async def stop_update_polling():
         await asyncio.gather(*active_tasks, return_exceptions=True)
 
 
+def weekly_game_category_stats(
+    users: list[dict], metadata: dict[int, dict], limit: int = 5,
+) -> tuple[list[dict], list[dict]]:
+    categories = {"consoles": {}, "genres": {}}
+    for user in users:
+        player_key = (user.get("ulid") or user["username"]).lower()
+        for game in user["weekly_games"]:
+            details = metadata.get(game["game_id"], {})
+            console = game.get("console") or details.get("console")
+            genres = [genre.strip() for genre in (details.get("genre") or "").split(",") if genre.strip()]
+            for kind, names in (("consoles", [console] if console else []), ("genres", genres)):
+                for name in names:
+                    category = categories[kind].setdefault(name, {"name": name, "players": set(), "games": set()})
+                    category["players"].add(player_key)
+                    category["games"].add(game["game_id"])
+
+    def summarize(values):
+        rows = [{"name": row["name"], "player_count": len(row["players"]), "game_count": len(row["games"])}
+                for row in values.values()]
+        return sorted(
+            rows,
+            key=lambda row: (-row["game_count"], -row["player_count"], row["name"].lower()),
+        )[:limit]
+
+    return summarize(categories["consoles"]), summarize(categories["genres"])
+
+
+def shared_game_stats(users: list[dict], limit: int = 5) -> list[dict]:
+    shared = {}
+    for user in users:
+        player_key = (user.get("ulid") or user["username"]).lower()
+        for game in user["weekly_games"]:
+            row = shared.setdefault(game["game_id"], {
+                "game_id": game["game_id"], "game_title": game["game_title"],
+                "game_image": game.get("game_image"), "players": set(), "completion": [],
+            })
+            if player_key in row["players"]:
+                continue
+            row["players"].add(player_key)
+            row["completion"].append(float(game.get("completion_percentage") or 0))
+            if not row["game_image"] and game.get("game_image"):
+                row["game_image"] = game["game_image"]
+    rows = [
+        {
+            "game_id": row["game_id"], "game_title": row["game_title"], "game_image": row["game_image"],
+            "player_count": len(row["players"]),
+            "average_completion": sum(row["completion"]) / len(row["completion"]),
+        }
+        for row in shared.values() if len(row["players"]) >= 2
+    ]
+    return sorted(rows, key=lambda row: (-row["player_count"], -row["average_completion"],
+                                         row["game_title"].lower()))[:limit]
+
+
 async def dashboard_context():
     users = db.get_tracked_users()
     week_start, week_end = current_week_range()
@@ -1703,6 +1930,7 @@ async def dashboard_context():
     weekly_cache = db.get_weekly_rankings(week_start_key)
     profile_cache = db.get_user_profiles()
     currently_playing_cache = db.get_currently_playing_cache()
+    game_libraries = db.get_user_game_libraries([user["ra_username"] for user in users])
 
     def enrich(u):
         username_key = u["ra_username"].lower()
@@ -1727,6 +1955,7 @@ async def dashboard_context():
 
         return {
             "id": u["id"],
+            "ra_username": u["ra_username"],
             "username": cached_profile.get("canonical_username") or u["ra_username"],
             "ulid": cached_profile.get("ra_ulid") or u.get("ra_ulid"),
             "avatar": cached_profile.get("avatar"),
@@ -1738,10 +1967,25 @@ async def dashboard_context():
             "retro_points_display": format_points(retro_points),
             "weekly_hardcore_display": format_points(weekly_hardcore_points),
             "weekly_retro_points_display": format_points(weekly_retro_points),
+            "weekly_games": [
+                {
+                    **game,
+                    "achievements_display": format_points(game.get("achievements_earned", 0)),
+                    "hardcore_points_display": format_points(game.get("hardcore_points", 0)),
+                    "retro_points_display": format_points(game.get("retro_points", 0)),
+                }
+                for game in (cached_weekly.get("played_games") or [])
+                if game.get("achievements_earned", 0) > 0
+            ],
             "currently_playing": currently_playing,
         }
 
     recent_activity = prepare_recent_activity(db.get_recent_activity(limit=RECENT_ACTIVITY_LIMIT))
+    recent_game_ids = {activity["game_id"] for activity in recent_activity if activity.get("game_id")}
+    recent_game_metadata = db.get_game_metadata(recent_game_ids)
+    for activity in recent_activity:
+        if not activity.get("console"):
+            activity["console"] = recent_game_metadata.get(activity.get("game_id"), {}).get("console")
     enriched = [enrich(u) for u in users]
     ulids_by_name = {}
     for user in enriched:
@@ -1754,6 +1998,7 @@ async def dashboard_context():
 
     schedule_user_snapshot_refresh_if_needed(users, profile_cache)
     schedule_weekly_refresh_if_needed(users, weekly_cache, week_start, week_end)
+    schedule_game_library_refresh_if_needed(users, game_libraries)
     schedule_recent_activity_refresh_if_needed(users, recent_activity)
 
     enriched.sort(key=lambda x: x.get("hardcore", 0), reverse=True)
@@ -1762,12 +2007,35 @@ async def dashboard_context():
         key=lambda x: (-x.get("weekly_hardcore", 0), x.get("username", "").lower()),
     )
     currently_playing_users = [u["currently_playing"] for u in enriched if u["currently_playing"]]
-
+    weekly_played_users = [user for user in enriched if user["weekly_games"]]
+    weekly_game_ids = {game["game_id"] for user in weekly_played_users for game in user["weekly_games"]}
+    weekly_consoles, weekly_genres = weekly_game_category_stats(
+        weekly_played_users, db.get_game_metadata(weekly_game_ids),
+    )
+    all_time_users = [
+        {
+            "username": user["username"], "ulid": user.get("ulid"),
+            "weekly_games": game_libraries.get(user["ra_username"].lower(), {}).get("games", []),
+        }
+        for user in enriched
+    ]
+    all_time_game_ids = {game["game_id"] for user in all_time_users for game in user["weekly_games"]}
+    all_time_consoles, all_time_genres = weekly_game_category_stats(
+        all_time_users, db.get_game_metadata(all_time_game_ids),
+    )
     return {
         "users": enriched,
         "weekly_users": weekly_users,
         "week_start_display": f"{week_start.strftime('%b')} {week_start.day}, {week_start.year}",
         "currently_playing_users": currently_playing_users,
+        "weekly_played_users": weekly_played_users,
+        "weekly_game_count": sum(len(user["weekly_games"]) for user in weekly_played_users),
+        "weekly_consoles": weekly_consoles,
+        "weekly_genres": weekly_genres,
+        "all_time_consoles": all_time_consoles,
+        "all_time_genres": all_time_genres,
+        "all_time_shared_games": shared_game_stats(all_time_users),
+        "game_library_building": bool(game_library_refresh_task and not game_library_refresh_task.done()),
         "recent_activity": recent_activity,
         "audio_enabled": db.audio_enabled(),
         "audio_sources": configured_audio_sources(),
@@ -1782,6 +2050,7 @@ async def dashboard_context():
 async def admin(request: Request, message: str = None):
     await refresh_ra_connection_if_stale()
     macos_notification_status = await macos_notification_service.status()
+    windows_notification_status = await windows_notification_service.status()
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
@@ -1797,6 +2066,7 @@ async def admin(request: Request, message: str = None):
             "setup_complete": db.setup_complete(),
             "update_status": await application_updater.status(),
             "macos_notification_status": macos_notification_status,
+            "windows_notification_status": windows_notification_status,
             "update_js_version": static_asset_version(str(runtime.resource_path("static", "js", "update.js"))),
             "recent_errors": recent_application_errors(),
             "application_log_name": APPLICATION_LOG_PATH.name,
@@ -1805,17 +2075,29 @@ async def admin(request: Request, message: str = None):
 
 
 @app.get("/users")
-async def users(request: Request, message: str = None):
+async def users(request: Request, message: str = None, notification_user: str | None = None):
     profiles = db.get_user_profiles()
     tracked = db.get_tracked_users()
     for user in tracked:
         profile = profiles.get(user["ra_username"].lower(), {})
         user["display_name"] = profile.get("canonical_username") or user["ra_username"]
         user["profile_ulid"] = profile.get("ra_ulid") or user.get("ra_ulid")
+    selected_notification_user = next(
+        (user for user in tracked
+         if user["ra_username"].lower() == (notification_user or "").lower()),
+        tracked[0] if tracked else None,
+    )
     return templates.TemplateResponse(
         request=request,
         name="users.html",
-        context={"users": tracked, "message": message},
+        context={
+            "users": tracked,
+            "message": message,
+            "selected_notification_user": selected_notification_user,
+            "selected_user_notification_preferences": db.get_user_notification_preferences(
+                selected_notification_user["ra_username"]
+            ) if selected_notification_user else None,
+        },
     )
 
 
@@ -1869,6 +2151,29 @@ async def user_profile(request: Request, ra_ulid: str):
                 unavailable = True
     awards = sorted_profile_awards(awards)
 
+    achievements = details.get("achievements") or []
+    if ("achievements" not in details
+            or cache_is_stale(details.get("achievements_refreshed_at"), timedelta(minutes=5))):
+        retry_key = (ra_ulid.lower(), "achievements")
+        if datetime.now(timezone.utc) < profile_detail_retry_at.get(retry_key, datetime.min.replace(tzinfo=timezone.utc)):
+            unavailable = True
+        else:
+            try:
+                achievements = await ra_client.latest_hardcore_achievements(ra_ulid, limit=5)
+                db.save_profile_detail(ra_ulid, "achievements", achievements)
+                profile_detail_retry_at.pop(retry_key, None)
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                profile_detail_retry_at[retry_key] = datetime.now(timezone.utc) + timedelta(minutes=5)
+                unavailable = True
+    achievements = [
+        {
+            **achievement,
+            "points_display": format_points(achievement.get("points", 0)),
+            "retro_points_display": format_points(achievement.get("retro_points", 0)),
+        }
+        for achievement in achievements[:5]
+    ]
+
     current_cache = db.get_currently_playing_cache().get(username.lower(), {})
     current = visible_current_activity(current_cache)
     recent = None
@@ -1902,9 +2207,30 @@ async def user_profile(request: Request, ra_ulid: str):
                     profile_detail_retry_at[retry_key] = datetime.now(timezone.utc) + timedelta(minutes=5)
                     unavailable = True
 
+    game_libraries = db.get_user_game_libraries([username])
+    schedule_game_library_refresh_if_needed(
+        [{"ra_username": username, "ra_ulid": ra_ulid}], game_libraries,
+    )
+    library_games = game_libraries.get(username.lower(), {}).get("games", [])
+    game_ids = {game["game_id"] for game in library_games}
+    consoles, genres = weekly_game_category_stats(
+        [{
+            "username": profile.get("canonical_username") or username,
+            "ulid": ra_ulid,
+            "weekly_games": library_games,
+        }],
+        db.get_game_metadata(game_ids),
+    )
+
     return templates.TemplateResponse(request=request, name="user_profile.html", context={
         "profile": profile, "current": current, "recent": recent, "awards": awards,
+        "achievements": achievements,
         "unavailable": unavailable, "ra_ulid": ra_ulid,
+        "most_played_consoles": consoles, "most_played_genres": genres,
+        "game_library_building": bool(game_library_refresh_task and not game_library_refresh_task.done()),
+        "profile_chart_js_version": static_asset_version(
+            str(runtime.resource_path("static", "js", "user-profile.js"))
+        ),
         "hardcore_display": format_points(profile["hardcore_points"]) if profile.get("hardcore_points") is not None else "—",
         "retro_display": format_points(profile["retro_points"]) if profile.get("retro_points") is not None else "—",
     })
@@ -2032,6 +2358,62 @@ async def update_macos_notification_settings(
     else:
         message = "Notification preferences saved, but macOS notification permission is unavailable."
     return admin_redirect(message)
+
+
+@app.post("/admin/windows-notifications")
+async def update_windows_notification_settings(
+    enabled: str | None = Form(None),
+    achievement: str | None = Form(None),
+    beaten: str | None = Form(None),
+    mastery: str | None = Form(None),
+    update: str | None = Form(None),
+):
+    if not windows_notification_service.supported:
+        raise HTTPException(status_code=404, detail="Windows notifications are unavailable.")
+    windows_notification_service.save_preferences(
+        enabled == "1",
+        {
+            "achievement": achievement == "1",
+            "beaten": beaten == "1",
+            "mastery": mastery == "1",
+            "update": update == "1",
+        },
+    )
+    status = await windows_notification_service.status()
+    if not status["enabled"]:
+        message = "Windows notifications disabled."
+    elif status["can_deliver"]:
+        message = "Windows notification preferences saved."
+    else:
+        message = "Notification preferences saved, but the Windows tray is unavailable."
+    return admin_redirect(message)
+
+
+@app.post("/users/notifications")
+async def update_user_notification_settings(
+    ra_username: str = Form(...),
+    mute_all: str | None = Form(None),
+    mute_sound: str | None = Form(None),
+    mute_achievement: str | None = Form(None),
+    mute_beaten: str | None = Form(None),
+    mute_mastery: str | None = Form(None),
+):
+    saved = db.set_user_notification_preferences(
+        ra_username,
+        {
+            "mute_all": mute_all == "1",
+            "mute_sound": mute_sound == "1",
+            "mute_achievement": mute_achievement == "1",
+            "mute_beaten": mute_beaten == "1",
+            "mute_mastery": mute_mastery == "1",
+        },
+    )
+    if not saved:
+        raise HTTPException(status_code=404, detail="Tracked user not found.")
+    return RedirectResponse(
+        url=f"/users?{urlencode({'message': 'User notification settings saved.', 'notification_user': ra_username})}#user-notifications",
+        status_code=303,
+    )
 
 
 @app.post("/admin/test-alert/{alert_type}")

@@ -11,7 +11,7 @@ version_file = os.environ["LEFTOVER_BUILD_VERSION_FILE"]
 debug_console = os.environ.get("LEFTOVER_BUILD_CONSOLE") == "1"
 
 a = Analysis(
-    [str(project_root / "launcher.py")],
+    [str(project_root / "windows_tray.py")],
     pathex=[str(project_root)],
     binaries=[],
     datas=[
@@ -19,7 +19,7 @@ a = Analysis(
         (str(project_root / "static"), "static"),
         (version_file, "."),
     ],
-    hiddenimports=collect_submodules("uvicorn"),
+    hiddenimports=collect_submodules("uvicorn") + ["webview.platforms.winforms", "pystray._win32"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

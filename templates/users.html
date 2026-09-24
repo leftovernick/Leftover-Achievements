@@ -42,33 +42,75 @@
         </form>
       </section>
 
-      <section class="panel tracked">
+      <section class="panel tracked" id="user-notifications">
         <div class="panel-header">
-          <h2>Currently Tracked</h2>
+          <h2>Tracked Players</h2>
           <span>{{ users|length }} users</span>
         </div>
-        <table class="compact-table">
-          <thead><tr><th>ID</th><th>Username</th><th>ULID</th><th>Added</th><th>Action</th></tr></thead>
-          <tbody>
-            {% for u in users %}
-            <tr>
-              <td>{{ u.id }}</td>
-              <td>{% if u.profile_ulid %}<a class="user-link" href="/users/{{ u.profile_ulid }}">{{ u.display_name }}</a>{% else %}{{ u.display_name }}{% endif %}</td>
-              <td>{{ u.ra_ulid or "-" }}</td>
-              <td>{{ u.created_at }}</td>
-              <td>
-                <form method="post" action="/admin/remove" class="inline-form">
-                  <input type="hidden" name="user_id" value="{{ u.id }}" />
-                  <button type="submit">Remove</button>
-                </form>
-              </td>
-            </tr>
-            {% else %}
-            <tr><td colspan="5" class="empty">No tracked users yet.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        {% if users and selected_notification_user is not defined %}
+          <div class="settings-form">
+            <p class="field-help">Restart LeftoverAchievements to load the new player alert controls.</p>
+            <div class="tracked-player-list">
+              {% for user in users %}
+                <div class="tracked-player-row">
+                  {% if user.profile_ulid %}<a class="user-link" href="/users/{{ user.profile_ulid }}">{{ user.display_name }}</a>{% else %}<strong>{{ user.display_name }}</strong>{% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% elif selected_notification_user %}
+          <div class="settings-form">
+            <form method="get" action="/users" class="player-notification-picker">
+              <label for="notification-user">Player</label>
+              <select id="notification-user" name="notification_user" onchange="this.form.requestSubmit()">
+                {% for user in users %}
+                  <option value="{{ user.ra_username }}" {% if user.ra_username == selected_notification_user.ra_username %}selected{% endif %}>{{ user.display_name }}</option>
+                {% endfor %}
+              </select>
+              <noscript><button type="submit" class="secondary-button">Load Player</button></noscript>
+            </form>
+            <div class="player-notification-heading">
+              <h3>{{ selected_notification_user.display_name }}</h3>
+              {% if selected_notification_user.profile_ulid %}<a class="user-link" href="/users/{{ selected_notification_user.profile_ulid }}">View Profile</a>{% endif %}
+            </div>
+            <form method="post" action="/users/notifications" class="player-notification-form">
+              <input type="hidden" name="ra_username" value="{{ selected_notification_user.ra_username }}" />
+              <fieldset class="player-alert-group">
+                <legend>Alert audio</legend>
+                <label class="checkbox-setting">
+                  <input type="checkbox" name="mute_sound" value="1" {% if selected_user_notification_preferences.mute_sound %}checked{% endif %} />
+                  <span>Mute this player’s alert sounds</span>
+                </label>
+                <p class="field-help">Their interrupts and desktop notifications will still appear without sound.</p>
+              </fieldset>
+              <fieldset class="player-alert-group">
+                <legend>Interrupts</legend>
+                <p class="field-help">Hiding an interrupt also suppresses its macOS or Windows desktop notification.</p>
+                <label class="checkbox-setting">
+                  <input type="checkbox" name="mute_all" value="1" {% if selected_user_notification_preferences.mute_all %}checked{% endif %} />
+                  <span>Hide all interrupts from this player</span>
+                </label>
+                <div class="notification-category-grid">
+                  {% for key, label in [('mute_achievement', 'Achievements'), ('mute_beaten', 'Games beaten'), ('mute_mastery', 'Masteries')] %}
+                    <label class="checkbox-setting">
+                      <input type="checkbox" name="{{ key }}" value="1" {% if selected_user_notification_preferences[key] %}checked{% endif %} />
+                      <span>Hide {{ label|lower }} interrupts</span>
+                    </label>
+                  {% endfor %}
+                </div>
+              </fieldset>
+              <button type="submit">Save Alert Preferences</button>
+            </form>
+            <form method="post" action="/admin/remove" class="player-remove-form" data-confirm-title="Remove {{ selected_notification_user.display_name }}?" data-confirm-message="This player will stop being tracked. Their saved alert preferences will be removed." data-confirm-label="Remove Player">
+              <input type="hidden" name="user_id" value="{{ selected_notification_user.id }}" />
+              <button type="button" class="secondary-button" data-confirm-trigger>Remove Player</button>
+            </form>
+          </div>
+        {% else %}
+          <p class="application-error-empty">No tracked players yet.</p>
+        {% endif %}
       </section>
     </main>
+    <script src="/static/js/confirm.js"></script>
   </body>
 </html>

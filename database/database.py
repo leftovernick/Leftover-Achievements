@@ -43,6 +43,7 @@ def init_db():
             achievement_badge TEXT,
             game_title TEXT NOT NULL,
             game_id INTEGER NOT NULL,
+            console TEXT,
             points INTEGER NOT NULL,
             retro_points INTEGER NOT NULL,
             unlock_time TEXT NOT NULL,
@@ -52,6 +53,8 @@ def init_db():
         )
         """
     )
+    if "console" not in {row[1] for row in cur.execute("PRAGMA table_info(recent_activity)")}:
+        cur.execute("ALTER TABLE recent_activity ADD COLUMN console TEXT")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS weekly_rankings (
@@ -59,6 +62,29 @@ def init_db():
             hardcore_points INTEGER NOT NULL,
             retro_points INTEGER NOT NULL,
             week_start TEXT NOT NULL,
+            refreshed_at TEXT NOT NULL,
+            played_games_json TEXT
+        )
+        """
+    )
+    if "played_games_json" not in {row[1] for row in cur.execute("PRAGMA table_info(weekly_rankings)")}:
+        cur.execute("ALTER TABLE weekly_rankings ADD COLUMN played_games_json TEXT")
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS game_metadata_cache (
+            game_id INTEGER PRIMARY KEY,
+            game_title TEXT NOT NULL,
+            console TEXT,
+            genre TEXT,
+            refreshed_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_game_library_cache (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            games_json TEXT NOT NULL,
             refreshed_at TEXT NOT NULL
         )
         """
@@ -86,12 +112,15 @@ def init_db():
             achievements_earned INTEGER NOT NULL DEFAULT 0,
             beaten_count INTEGER,
             mastery_count INTEGER,
+            played_games_json TEXT,
             created_at TEXT NOT NULL,
             PRIMARY KEY (week_start, user_key),
             FOREIGN KEY (week_start) REFERENCES weekly_history_weeks(week_start)
         )
         """
     )
+    if "played_games_json" not in {row[1] for row in cur.execute("PRAGMA table_info(weekly_history_rankings)")}:
+        cur.execute("ALTER TABLE weekly_history_rankings ADD COLUMN played_games_json TEXT")
     cur.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_weekly_history_rankings_week
@@ -127,9 +156,16 @@ def init_db():
             awards_json TEXT,
             awards_refreshed_at TEXT,
             recent_json TEXT,
-            recent_refreshed_at TEXT
+            recent_refreshed_at TEXT,
+            achievements_json TEXT,
+            achievements_refreshed_at TEXT
         )
     """)
+    profile_detail_columns = {row[1] for row in cur.execute("PRAGMA table_info(user_profile_details)")}
+    if "achievements_json" not in profile_detail_columns:
+        cur.execute("ALTER TABLE user_profile_details ADD COLUMN achievements_json TEXT")
+    if "achievements_refreshed_at" not in profile_detail_columns:
+        cur.execute("ALTER TABLE user_profile_details ADD COLUMN achievements_refreshed_at TEXT")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS processed_achievement_unlocks (
@@ -212,6 +248,18 @@ def init_db():
         CREATE TABLE IF NOT EXISTS native_notification_deliveries (
             dedupe_key TEXT PRIMARY KEY,
             delivered_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_notification_preferences (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            mute_all INTEGER NOT NULL DEFAULT 0,
+            mute_sound INTEGER NOT NULL DEFAULT 0,
+            mute_achievement INTEGER NOT NULL DEFAULT 0,
+            mute_beaten INTEGER NOT NULL DEFAULT 0,
+            mute_mastery INTEGER NOT NULL DEFAULT 0
         )
         """
     )
@@ -299,14 +347,14 @@ def get_profile_details(ra_ulid: str) -> dict:
         if not row:
             return {}
         result = dict(row)
-        for key in ("awards", "recent"):
+        for key in ("awards", "recent", "achievements"):
             payload = result.pop(f"{key}_json")
             result[key] = json.loads(payload) if payload else None
         return result
 
 
 def save_profile_detail(ra_ulid: str, kind: str, payload):
-    if kind not in {"awards", "recent"}:
+    if kind not in {"awards", "recent", "achievements"}:
         raise ValueError("Unsupported profile detail")
     with get_conn() as conn:
         conn.execute(f"""
@@ -356,7 +404,46 @@ def remove_tracked_user(user_id: int):
         cur.execute("DELETE FROM tracked_users WHERE id = ?", (user_id,))
         if user:
             cur.execute("DELETE FROM user_poll_schedule WHERE ra_username = ?", (user["ra_username"],))
+            cur.execute("DELETE FROM user_notification_preferences WHERE ra_username = ?", (user["ra_username"],))
         conn.commit()
+
+
+USER_NOTIFICATION_FIELDS = (
+    "mute_all", "mute_sound", "mute_achievement", "mute_beaten", "mute_mastery"
+)
+
+
+def get_user_notification_preferences(ra_username: str) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM user_notification_preferences WHERE ra_username = ?",
+            (ra_username,),
+        ).fetchone()
+    return {field: bool(row[field]) if row else False for field in USER_NOTIFICATION_FIELDS}
+
+
+def set_user_notification_preferences(ra_username: str, preferences: dict[str, bool]) -> bool:
+    with get_conn() as conn:
+        user = conn.execute(
+            "SELECT ra_username FROM tracked_users WHERE ra_username = ?", (ra_username,)
+        ).fetchone()
+        if not user:
+            return False
+        conn.execute(
+            """
+            INSERT INTO user_notification_preferences
+                (ra_username, mute_all, mute_sound, mute_achievement, mute_beaten, mute_mastery)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                mute_all = excluded.mute_all,
+                mute_sound = excluded.mute_sound,
+                mute_achievement = excluded.mute_achievement,
+                mute_beaten = excluded.mute_beaten,
+                mute_mastery = excluded.mute_mastery
+            """,
+            (user["ra_username"], *(int(bool(preferences.get(field))) for field in USER_NOTIFICATION_FIELDS)),
+        )
+    return True
 
 
 def next_tracked_user_to_poll() -> dict | None:
@@ -410,6 +497,7 @@ def get_recent_activity(limit: int = 5):
                 achievement_badge,
                 game_title,
                 game_id,
+                console,
                 points,
                 retro_points,
                 unlock_time,
@@ -439,6 +527,7 @@ def save_recent_activity(activity: dict, keep_limit: int = 5):
                 achievement_badge,
                 game_title,
                 game_id,
+                console,
                 points,
                 retro_points,
                 unlock_time,
@@ -446,7 +535,7 @@ def save_recent_activity(activity: dict, keep_limit: int = 5):
                 hardcore,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dedupe_key) DO UPDATE SET
                 username = excluded.username,
                 avatar = excluded.avatar,
@@ -455,6 +544,7 @@ def save_recent_activity(activity: dict, keep_limit: int = 5):
                 achievement_badge = excluded.achievement_badge,
                 game_title = excluded.game_title,
                 game_id = excluded.game_id,
+                console = excluded.console,
                 points = excluded.points,
                 retro_points = excluded.retro_points,
                 unlock_time = excluded.unlock_time,
@@ -471,6 +561,7 @@ def save_recent_activity(activity: dict, keep_limit: int = 5):
                 activity.get("achievement_badge"),
                 activity["game_title"],
                 activity["game_id"],
+                activity.get("console"),
                 activity["points"],
                 activity["retro_points"],
                 activity["unlock_time_iso"],
@@ -508,27 +599,35 @@ def get_weekly_rankings(week_start: str):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT ra_username, hardcore_points, retro_points, week_start, refreshed_at
+            SELECT ra_username, hardcore_points, retro_points, week_start, refreshed_at, played_games_json
             FROM weekly_rankings
             WHERE week_start = ?
             """,
             (week_start,),
         )
-        return {row["ra_username"].lower(): dict(row) for row in cur.fetchall()}
+        rankings = {}
+        for row in cur.fetchall():
+            ranking = dict(row)
+            payload = ranking.pop("played_games_json")
+            ranking["played_games"] = json.loads(payload) if payload is not None else None
+            rankings[row["ra_username"].lower()] = ranking
+        return rankings
 
 
-def save_weekly_ranking(ra_username: str, hardcore_points: int, retro_points: int, week_start: str):
+def save_weekly_ranking(ra_username: str, hardcore_points: int, retro_points: int, week_start: str,
+                        played_games: list[dict] | None = None):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO weekly_rankings (ra_username, hardcore_points, retro_points, week_start, refreshed_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO weekly_rankings (ra_username, hardcore_points, retro_points, week_start, refreshed_at, played_games_json)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(ra_username) DO UPDATE SET
                 hardcore_points = excluded.hardcore_points,
                 retro_points = excluded.retro_points,
                 week_start = excluded.week_start,
-                refreshed_at = excluded.refreshed_at
+                refreshed_at = excluded.refreshed_at,
+                played_games_json = excluded.played_games_json
             """,
             (
                 ra_username,
@@ -536,6 +635,7 @@ def save_weekly_ranking(ra_username: str, hardcore_points: int, retro_points: in
                 retro_points,
                 week_start,
                 datetime.now(timezone.utc).isoformat(),
+                json.dumps(played_games) if played_games is not None else None,
             ),
         )
         conn.commit()
@@ -547,13 +647,14 @@ def save_weekly_rankings(rankings: list[dict], week_start: str):
         cur = conn.cursor()
         cur.executemany(
             """
-            INSERT INTO weekly_rankings (ra_username, hardcore_points, retro_points, week_start, refreshed_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO weekly_rankings (ra_username, hardcore_points, retro_points, week_start, refreshed_at, played_games_json)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(ra_username) DO UPDATE SET
                 hardcore_points = excluded.hardcore_points,
                 retro_points = excluded.retro_points,
                 week_start = excluded.week_start,
-                refreshed_at = excluded.refreshed_at
+                refreshed_at = excluded.refreshed_at,
+                played_games_json = excluded.played_games_json
             """,
             [
                 (
@@ -562,9 +663,75 @@ def save_weekly_rankings(rankings: list[dict], week_start: str):
                     ranking["retro_points"],
                     week_start,
                     refreshed_at,
+                    json.dumps(ranking.get("played_games", [])),
                 )
                 for ranking in rankings
             ],
+        )
+        conn.commit()
+
+
+def get_game_metadata(game_ids: list[int] | set[int]) -> dict[int, dict]:
+    if not game_ids:
+        return {}
+    ids = sorted({int(game_id) for game_id in game_ids})
+    placeholders = ", ".join("?" for _ in ids)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT game_id, game_title, console, genre, refreshed_at FROM game_metadata_cache WHERE game_id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return {row["game_id"]: dict(row) for row in rows}
+
+
+def save_game_metadata(metadata: dict):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO game_metadata_cache (game_id, game_title, console, genre, refreshed_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(game_id) DO UPDATE SET
+                game_title = excluded.game_title,
+                console = excluded.console,
+                genre = excluded.genre,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (metadata["game_id"], metadata["game_title"], metadata.get("console"), metadata.get("genre"),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def get_user_game_libraries(usernames: list[str]) -> dict[str, dict]:
+    if not usernames:
+        return {}
+    placeholders = ", ".join("?" for _ in usernames)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT ra_username, games_json, refreshed_at FROM user_game_library_cache WHERE ra_username IN ({placeholders})",
+            usernames,
+        ).fetchall()
+        return {
+            row["ra_username"].lower(): {
+                "ra_username": row["ra_username"],
+                "games": json.loads(row["games_json"]),
+                "refreshed_at": row["refreshed_at"],
+            }
+            for row in rows
+        }
+
+
+def save_user_game_library(ra_username: str, games: list[dict]):
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_game_library_cache (ra_username, games_json, refreshed_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ra_username) DO UPDATE SET
+                games_json = excluded.games_json,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (ra_username, json.dumps(games), datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
 
@@ -629,7 +796,7 @@ def history_user_exists(week_start: str, user_key: str) -> bool:
 
 
 def save_history_ranking(week_start: str, ranking: dict):
-    """Insert one immutable user/week snapshot, ignoring an existing row."""
+    """Insert an immutable score snapshot, allowing missing game detail to be filled later."""
     with get_conn() as conn:
         conn.execute(
             """
@@ -645,8 +812,11 @@ def save_history_ranking(week_start: str, ranking: dict):
                 achievements_earned,
                 beaten_count,
                 mastery_count,
+                played_games_json,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(week_start, user_key) DO UPDATE SET
+                played_games_json = COALESCE(excluded.played_games_json, weekly_history_rankings.played_games_json)
             """,
             (
                 week_start,
@@ -660,6 +830,7 @@ def save_history_ranking(week_start: str, ranking: dict):
                 ranking.get("achievements_earned", 0),
                 ranking.get("beaten_count"),
                 ranking.get("mastery_count"),
+                json.dumps(ranking.get("played_games")) if ranking.get("played_games") is not None else None,
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
@@ -682,6 +853,7 @@ def get_history_rankings(week_start: str):
                 achievements_earned,
                 beaten_count,
                 mastery_count,
+                played_games_json,
                 created_at
             FROM weekly_history_rankings
             WHERE week_start = ?
@@ -689,7 +861,13 @@ def get_history_rankings(week_start: str):
             """,
             (week_start,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        rankings = []
+        for row in rows:
+            ranking = dict(row)
+            payload = ranking.pop("played_games_json")
+            ranking["played_games"] = json.loads(payload) if payload is not None else None
+            rankings.append(ranking)
+        return rankings
 
 
 def get_recorded_history_award_counts(start: datetime, end: datetime, usernames: list[str]) -> dict:
@@ -741,6 +919,15 @@ def _get_recorded_chart_awards(usernames: list[str], end: datetime, table: str) 
     placeholders = ",".join("?" for _ in usernames)
     result = {}
     with closing(get_conn()) as conn:
+        canonical_images = {}
+        for library in conn.execute(
+            f"SELECT ra_username, games_json FROM user_game_library_cache "
+            f"WHERE ra_username COLLATE NOCASE IN ({placeholders})",
+            usernames,
+        ):
+            for game in json.loads(library["games_json"]):
+                if game.get("game_image"):
+                    canonical_images[(library["ra_username"].lower(), int(game["game_id"]))] = game["game_image"]
         for row in conn.execute(f"""
             SELECT ra_username, game_id, game_title, game_image, awarded_at
             FROM {table}
@@ -749,7 +936,9 @@ def _get_recorded_chart_awards(usernames: list[str], end: datetime, table: str) 
             ORDER BY julianday(awarded_at)
         """, [*usernames, end.isoformat()]):
             result.setdefault(row["ra_username"].lower(), []).append({
-                "game_id": row["game_id"], "game_title": row["game_title"], "game_image": row["game_image"], "date": row["awarded_at"],
+                "game_id": row["game_id"], "game_title": row["game_title"],
+                "game_image": canonical_images.get((row["ra_username"].lower(), row["game_id"])) or row["game_image"],
+                "date": row["awarded_at"],
             })
     return result
 
@@ -766,9 +955,8 @@ def update_recorded_beaten_metadata(awards: list[dict]):
     with closing(get_conn()) as conn:
         conn.executemany("""
             UPDATE processed_beaten_game_events SET
-                game_title = COALESCE(game_title, ?), game_image = COALESCE(game_image, ?)
+                game_title = COALESCE(?, game_title), game_image = COALESCE(?, game_image)
             WHERE ra_username = ? AND game_id = ?
-              AND (game_title IS NULL OR game_image IS NULL)
         """, [(award.get("game_title"), award.get("game_image"), award["username"], award["game_id"]) for award in awards])
         conn.commit()
 
@@ -779,9 +967,15 @@ def update_recorded_mastery_titles(masteries: list[dict]):
     with closing(get_conn()) as conn:
         conn.executemany("""
             UPDATE processed_mastery_events SET
-                game_title = COALESCE(game_title, ?), game_image = COALESCE(game_image, ?)
-            WHERE dedupe_key = ? AND (game_title IS NULL OR game_image IS NULL)
+                game_title = COALESCE(?, game_title), game_image = COALESCE(?, game_image)
+            WHERE dedupe_key = ?
         """, [(award.get("game_title"), award.get("game_image"), award["dedupe_key"]) for award in masteries])
+        conn.executemany("""
+            UPDATE processed_beaten_game_events SET
+                game_title = COALESCE(?, game_title), game_image = COALESCE(?, game_image)
+            WHERE ra_username = ? AND game_id = ?
+        """, [(award.get("game_title"), award.get("game_image"), award["username"], award["game_id"])
+                for award in masteries])
         conn.commit()
 
 
@@ -792,8 +986,16 @@ def get_history_user_weeks(user_key: str) -> set[str]:
         )}
 
 
+def get_history_user_weeks_with_games(user_key: str) -> set[str]:
+    with closing(get_conn()) as conn:
+        return {row[0] for row in conn.execute(
+            "SELECT week_start FROM weekly_history_rankings WHERE user_key = ? AND played_games_json IS NOT NULL",
+            (user_key,),
+        )}
+
+
 def save_completed_history_snapshots(snapshots: list[dict]):
-    """Insert reconstructed weeks in one transaction without replacing snapshots."""
+    """Insert reconstructed weeks while only enriching existing rows with game detail."""
     created = datetime.now(timezone.utc).isoformat()
     with closing(get_conn()) as conn:
         conn.executemany("INSERT OR IGNORE INTO weekly_history_weeks VALUES (?, ?, ?)", [
@@ -802,12 +1004,15 @@ def save_completed_history_snapshots(snapshots: list[dict]):
         conn.executemany("""
             INSERT OR IGNORE INTO weekly_history_rankings (
                 week_start, user_key, ra_username, canonical_username, ra_ulid, avatar,
-                hardcore_points, retro_points, achievements_earned, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                hardcore_points, retro_points, achievements_earned, played_games_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(week_start, user_key) DO UPDATE SET
+                played_games_json = COALESCE(excluded.played_games_json, weekly_history_rankings.played_games_json)
         """, [(
             row["week_start"], row["user_key"], row["ra_username"], row["canonical_username"],
             row.get("ra_ulid"), row.get("avatar"), row["hardcore_points"], row["retro_points"],
-            row["achievements_earned"], created,
+            row["achievements_earned"], json.dumps(row.get("played_games")) if row.get("played_games") is not None else None,
+            created,
         ) for row in snapshots])
         conn.commit()
 
@@ -864,8 +1069,18 @@ def get_weekly_chart_history(limit: int = 8):
                 ra_ulid,
                 hardcore_points,
                 retro_points
-            FROM weekly_history_rankings
+            FROM weekly_history_rankings AS ranking
             WHERE week_start IN ({placeholders})
+              AND EXISTS (
+                SELECT 1
+                FROM tracked_users AS tracked
+                WHERE tracked.ra_username = ranking.ra_username COLLATE NOCASE
+                   OR (
+                     tracked.ra_ulid IS NOT NULL
+                     AND ranking.ra_ulid IS NOT NULL
+                     AND tracked.ra_ulid = ranking.ra_ulid COLLATE NOCASE
+                   )
+              )
             ORDER BY
                 week_start ASC,
                 hardcore_points DESC,

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Charts</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=charts-timeline-play-1" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=activity-toggle-1" />
   </head>
   <body class="web-dashboard charts-page">
     <header class="top-nav">
@@ -107,8 +107,24 @@
         <p class="chart-history-note">Weekly cumulative scores, starting at each player’s first recorded Hardcore scoring achievement (first scoring day for older caches). Historical curves use available unlocks and current point values; removed unlocks or score adjustments may differ from past totals. The final point uses the reported account total as of its last refresh.</p>
       </section>
 
+      <section class="panel chart-panel chart-activity" data-chart-activity hidden>
+        <div class="panel-header chart-activity-header">
+          <h2 data-activity-title>Achievements Earned by Day of Week</h2>
+          <span data-activity-coverage>Lifetime average</span>
+          <fieldset class="chart-range" aria-label="Achievement activity grouping">
+            <legend>Group by</legend>
+            <div>
+              <button type="button" data-activity-view="weekday" class="active" aria-pressed="true">Day of Week</button>
+              <button type="button" data-activity-view="monthly" aria-pressed="false">Month</button>
+            </div>
+          </fieldset>
+        </div>
+        <div class="chart-canvas-wrap"><canvas id="achievement-activity-chart" aria-label="Average achievements earned by calendar period" role="img"></canvas></div>
+        <p class="chart-history-note" data-activity-note>Average Hardcore achievements per eligible player-day, including days with no unlocks. Weekdays use the server's local calendar.</p>
+      </section>
+
     </main>
     <script src="/static/vendor/chart.umd.min.js"></script>
-    <script src="/static/js/charts.js?v={{ chart_js_version }}-timeline-play-5"></script>
+    <script src="/static/js/charts.js?v={{ chart_js_version }}-activity-toggle-1"></script>
   </body>
 </html>

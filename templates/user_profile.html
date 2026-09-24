@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ profile.canonical_username }} · LeftoverAchievements</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=profile-1" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=profile-achievements-2" />
   </head>
   <body class="web-dashboard profile-page">
     <header class="top-nav">
@@ -45,6 +45,51 @@
         {% else %}<p class="empty">No recent game available.</p>{% endif %}
       </section>
 
+      <section class="panel profile-achievements">
+        <div class="panel-header"><h2>Recent Achievements</h2><span>Latest 5 Hardcore unlocks</span></div>
+        {% if achievements %}<div class="profile-achievement-grid">
+          {% for achievement in achievements %}<article class="profile-achievement">
+            {% if achievement.achievement_badge %}<img src="{{ achievement.achievement_badge }}" alt="{{ achievement.achievement_title }} badge" />{% endif %}
+            <div>
+              <h3>{{ achievement.achievement_title }}</h3>
+              {% if achievement.achievement_description %}<p>{{ achievement.achievement_description }}</p>{% endif %}
+              <span>{{ achievement.game_title }}{% if achievement.console %} · {{ achievement.console }}{% endif %}</span>
+              <strong>+{{ achievement.points_display }} ({{ achievement.retro_points_display }})</strong>
+              <time datetime="{{ achievement.unlock_time_iso }}">{{ achievement.unlock_time_display }}</time>
+            </div>
+          </article>{% endfor %}
+        </div>{% else %}<p class="empty">No recent Hardcore achievements found.</p>{% endif %}
+      </section>
+
+      <section class="weekly-category-grid profile-category-grid" aria-label="All-time most played categories">
+        <div class="panel">
+          <div class="panel-header"><h2>Most Played Consoles</h2><span>All time</span></div>
+          <table class="leaderboard compact-table weekly-category-table profile-category-table">
+            <thead><tr><th>Console</th><th>Games</th></tr></thead>
+            <tbody>
+              {% for category in most_played_consoles %}
+                <tr><td><strong>{{ category.name }}</strong></td><td>{{ category.game_count }}</td></tr>
+              {% else %}
+                <tr><td colspan="2" class="empty">{{ 'Game library is loading.' if game_library_building else 'No console history is cached yet.' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h2>Most Played Genres</h2><span>All time</span></div>
+          <table class="leaderboard compact-table weekly-category-table profile-category-table">
+            <thead><tr><th>Genre</th><th>Games</th></tr></thead>
+            <tbody>
+              {% for category in most_played_genres %}
+                <tr><td><strong>{{ category.name }}</strong></td><td>{{ category.game_count }}</td></tr>
+              {% else %}
+                <tr><td colspan="2" class="empty">{{ 'Genre metadata is loading.' if game_library_building else 'No genre history is cached yet.' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {% for kind, heading, empty_text in [('masteries', 'Mastered Games', 'No mastered games yet'), ('beaten', 'Beaten Games', 'No beaten games yet')] %}
       <section class="panel profile-awards">
         <div class="panel-header"><h2>{{ heading }}</h2><strong class="profile-award-count {{ 'gold' if kind == 'masteries' else 'white' }}" aria-label="{{ awards[kind]|length }} {{ heading|lower }}">{{ awards[kind]|length }}</strong></div>
@@ -57,6 +102,18 @@
       </section>
       {% endfor %}
       {% if unavailable %}<p class="profile-notice">Some RetroAchievements data is temporarily unavailable. Saved details are shown where available.</p>{% endif %}
+
+      <section class="panel chart-panel profile-history-chart" data-profile-history-chart data-profile-ulid="{{ ra_ulid }}" data-profile-username="{{ profile.canonical_username }}">
+        <div class="panel-header">
+          <h2>All-Time Hardcore Points</h2>
+          <span data-profile-chart-status>Loading account history…</span>
+        </div>
+        <div class="chart-canvas-wrap" data-profile-chart-canvas hidden>
+          <canvas id="profile-all-time-chart" aria-label="{{ profile.canonical_username }} all-time Hardcore Points" role="img"></canvas>
+        </div>
+      </section>
     </main>
+    <script src="/static/vendor/chart.umd.min.js"></script>
+    <script src="/static/js/user-profile.js?v={{ profile_chart_js_version }}"></script>
   </body>
 </html>

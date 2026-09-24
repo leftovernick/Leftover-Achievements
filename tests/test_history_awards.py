@@ -79,3 +79,25 @@ class HistoryAwardRenderingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(counts.call_args.args[2], ["Player"])
         self.assertEqual(counts.call_args.args[1].date().isoformat(), "2026-09-14")
 
+    async def test_history_exposes_games_grouped_under_each_player(self):
+        week = {"week_start": "2026-09-07", "week_end": "2026-09-13"}
+        ranking = {
+            "ra_username": "Player", "canonical_username": "Player", "ra_ulid": "ABC", "avatar": None,
+            "hardcore_points": 5, "retro_points": 9, "achievements_earned": 1,
+            "played_games": [{"game_id": 10, "game_title": "Played Game", "console": "NES",
+                              "achievements_earned": 1, "hardcore_points": 5, "retro_points": 9}],
+        }
+        with (
+            patch.object(application, "schedule_history_backfill", new=AsyncMock()),
+            patch.object(db, "get_history_weeks", return_value=[week]),
+            patch.object(db, "get_history_week", return_value=week),
+            patch.object(db, "get_history_rankings", return_value=[ranking]),
+            patch.object(db, "history_week_count", return_value=1),
+            patch.object(db, "get_recorded_history_award_counts", return_value={"beaten": 0, "masteries": 0}),
+            patch.object(application.templates, "TemplateResponse", side_effect=lambda **kwargs: kwargs["context"]),
+        ):
+            context = await application.history(request=None, week="2026-09-07")
+
+        game = context["played_game_users"][0]["played_games"][0]
+        self.assertEqual(game["game_title"], "Played Game")
+        self.assertEqual(game["hardcore_points_display"], "5")

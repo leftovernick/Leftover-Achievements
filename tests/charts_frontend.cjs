@@ -26,6 +26,7 @@ class Element {
 const ranges = ['4', '8', '12'].map((value) => new Element({ chartRange: value }));
 const metrics = ['hardcore_points', 'retro_points'].map((value) => new Element({ chartMetric: value }));
 const views = ['fit', 'timeline'].map((value) => new Element({ chartView: value }));
+const activityViews = ['weekday', 'monthly'].map((value) => new Element({ activityView: value }));
 const awards = ['mastery', 'beaten'].map((value) => Object.assign(new Element({chartAwards: value}), {checked: true}));
 const elements = new Map();
 function element(key) {
@@ -47,6 +48,29 @@ class Chart {
 const allTime = {
   configured: true, ready_users: 2, building: false, needs_refresh: false,
   start: '2010-01-01T00:00:00Z', end: '2026-09-14T00:00:00Z', progress: {},
+  weekday_activity: [
+    {weekday: 'Monday', achievements_earned: 42, eligible_days: 100, average: 0.42},
+    {weekday: 'Tuesday', achievements_earned: 30, eligible_days: 100, average: 0.30},
+    {weekday: 'Wednesday', achievements_earned: 25, eligible_days: 100, average: 0.25},
+    {weekday: 'Thursday', achievements_earned: 20, eligible_days: 100, average: 0.20},
+    {weekday: 'Friday', achievements_earned: 35, eligible_days: 100, average: 0.35},
+    {weekday: 'Saturday', achievements_earned: 60, eligible_days: 100, average: 0.60},
+    {weekday: 'Sunday', achievements_earned: 50, eligible_days: 100, average: 0.50},
+  ],
+  monthly_activity: [
+    {month: 'January', achievements_earned: 80, eligible_months: 10, average: 8},
+    {month: 'February', achievements_earned: 70, eligible_months: 10, average: 7},
+    {month: 'March', achievements_earned: 90, eligible_months: 10, average: 9},
+    {month: 'April', achievements_earned: 60, eligible_months: 10, average: 6},
+    {month: 'May', achievements_earned: 100, eligible_months: 10, average: 10},
+    {month: 'June', achievements_earned: 110, eligible_months: 10, average: 11},
+    {month: 'July', achievements_earned: 120, eligible_months: 10, average: 12},
+    {month: 'August', achievements_earned: 130, eligible_months: 10, average: 13},
+    {month: 'September', achievements_earned: 140, eligible_months: 10, average: 14},
+    {month: 'October', achievements_earned: 150, eligible_months: 10, average: 15},
+    {month: 'November', achievements_earned: 160, eligible_months: 10, average: 16},
+    {month: 'December', achievements_earned: 170, eligible_months: 10, average: 17},
+  ],
   users: [
     { username: 'First', user_key: '1', ready: true, as_of: '2026-09-14T00:00:00Z', points: [
       { date: '2010-01-01T00:00:00Z', hardcore_points: 0, retro_points: 0 },
@@ -80,7 +104,7 @@ const context = {
   console: { ...console, error: (error) => consoleErrors.push(error) },
   document: {
     querySelector: element,
-    querySelectorAll: (selector) => selector === '[data-chart-range]' ? ranges : selector === '[data-chart-metric]' ? metrics : selector === '[data-chart-view]' ? views : selector === '[data-chart-awards]' ? awards : [],
+    querySelectorAll: (selector) => selector === '[data-chart-range]' ? ranges : selector === '[data-chart-metric]' ? metrics : selector === '[data-chart-view]' ? views : selector === '[data-chart-awards]' ? awards : selector === '[data-activity-view]' ? activityViews : [],
     getElementById: element,
     createElement: () => ({getContext: () => ({fillRect() {}, strokeRect() {}, drawImage: (...args) => logoDraws.push(args)})}),
   },
@@ -100,6 +124,24 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../static/js/charts.js'
 (async () => {
   await new Promise(setImmediate);
   assert.equal(element('hardcore-points-chart').chart.data.datasets[0].data[0], 10);
+  let activityChart = element('achievement-activity-chart').chart;
+  assert.equal(activityChart.data.labels[0], 'Monday');
+  assert.equal(activityChart.data.datasets[0].data[5], 0.60);
+  assert.equal(activityChart.options.plugins.legend.display, false);
+  assert.match(activityChart.options.plugins.tooltip.callbacks.afterLabel({dataIndex: 0}), /42 achievements across 100 player-days/);
+  assert.equal(element('[data-chart-activity]').hidden, false);
+  const activityRequestCount = requests.length;
+  activityViews[1].click();
+  activityChart = element('achievement-activity-chart').chart;
+  assert.equal(requests.length, activityRequestCount, 'activity toggle must not fetch');
+  assert.equal(activityViews[1].classes.has('active'), true);
+  assert.equal(element('[data-activity-title]').textContent, 'Achievements Earned by Month');
+  const monthlyActivityChart = activityChart;
+  assert.equal(monthlyActivityChart.data.labels[0], 'January');
+  assert.equal(monthlyActivityChart.data.datasets[0].data[11], 17);
+  assert.equal(monthlyActivityChart.options.plugins.legend.display, false);
+  assert.match(monthlyActivityChart.options.plugins.tooltip.callbacks.afterLabel({dataIndex: 0}), /80 achievements across 10 player-months/);
+  activityViews[0].click();
   const rankChart = element('rank-history-chart').chart;
   assert.ok(rankChart.options.scales.y.min < 1);
   assert.ok(rankChart.options.scales.y.max > 1);

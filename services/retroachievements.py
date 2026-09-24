@@ -103,7 +103,21 @@ class RetroAchievements:
             return False
         return bool(data.get("Title") or data.get("GameTitle") or data.get("title"))
 
-    async def user_summary(self, username: str, recent_games_count: int = 1) -> dict:
+    async def game_summary(self, game_id: int) -> dict:
+        """Return stable console and genre metadata for a game."""
+        data = await self._get_json("API_GetGame.php", {"i": int(game_id)})
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected RetroAchievements API response")
+        return {
+            "game_id": int(game_id),
+            "game_title": data.get("Title") or data.get("GameTitle") or data.get("title") or f"Game #{game_id}",
+            "console": data.get("ConsoleName") or data.get("consoleName") or data.get("Console") or data.get("console"),
+            "genre": data.get("Genre") or data.get("genre"),
+        }
+
+    async def user_summary(
+        self, username: str, recent_games_count: int = 1, recent_achievements_count: int = 0,
+    ) -> dict:
         """Return raw user summary data from RetroAchievements."""
         if not self.api_key:
             raise ValueError("RA API key not set")
@@ -117,7 +131,7 @@ class RetroAchievements:
             {
                 "u": target,
                 "g": recent_games_count,
-                "a": 0,
+                "a": recent_achievements_count,
             },
         )
 
@@ -125,6 +139,62 @@ class RetroAchievements:
             raise ValueError("Unexpected RetroAchievements API response")
 
         return data
+
+    async def latest_hardcore_achievements(self, username: str, limit: int = 5) -> list[dict]:
+        """Return a bounded, newest-first list of a user's Hardcore unlocks."""
+        summary = await self.user_summary(
+            username,
+            recent_games_count=max(10, limit),
+            recent_achievements_count=limit,
+        )
+        recent_games = summary.get("RecentlyPlayed") or summary.get("recentlyPlayed") or []
+        game_details = {}
+        for game in recent_games if isinstance(recent_games, list) else []:
+            if not isinstance(game, dict):
+                continue
+            game_id = int(game.get("GameID") or game.get("gameId") or 0)
+            if game_id:
+                game_details[game_id] = game
+
+        recent = summary.get("RecentAchievements") or summary.get("recentAchievements") or {}
+        candidates = []
+        groups = recent.values() if isinstance(recent, dict) else []
+        for group in groups:
+            achievements = group.values() if isinstance(group, dict) else group if isinstance(group, list) else []
+            for achievement in achievements:
+                if not isinstance(achievement, dict):
+                    continue
+                hardcore = achievement.get("HardcoreAchieved", achievement.get("hardcoreAchieved"))
+                if hardcore not in (1, "1", True):
+                    continue
+                unlock_time = self._parse_api_datetime(
+                    achievement.get("DateAwarded") or achievement.get("dateAwarded")
+                    or achievement.get("Date") or achievement.get("date")
+                )
+                achievement_id = achievement.get("ID") or achievement.get("id")
+                if not achievement_id or not unlock_time:
+                    continue
+                game_id = int(achievement.get("GameID") or achievement.get("gameId") or 0)
+                game = game_details.get(game_id, {})
+                badge = achievement.get("BadgeURL") or achievement.get("badgeUrl")
+                badge_name = achievement.get("BadgeName") or achievement.get("badgeName")
+                if not badge and badge_name:
+                    badge = f"/Badge/{badge_name}.png"
+                candidates.append({
+                    "achievement_id": int(achievement_id),
+                    "achievement_title": achievement.get("Title") or achievement.get("title") or "Unknown Achievement",
+                    "achievement_description": achievement.get("Description") or achievement.get("description") or "",
+                    "achievement_badge": urljoin(RA_BASE_URL, badge) if badge else None,
+                    "game_id": game_id,
+                    "game_title": achievement.get("GameTitle") or achievement.get("gameTitle")
+                                  or game.get("Title") or game.get("title") or f"Game #{game_id}",
+                    "console": game.get("ConsoleName") or game.get("consoleName"),
+                    "points": int(achievement.get("Points") or achievement.get("points") or 0),
+                    "retro_points": int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0),
+                    "unlock_time_iso": unlock_time.isoformat(),
+                    "unlock_time_display": unlock_time.strftime("%b %-d, %-I:%M %p"),
+                })
+        return sorted(candidates, key=lambda item: item["unlock_time_iso"], reverse=True)[:limit]
 
     async def game_info_and_user_progress(self, username: str, game_id: int) -> dict:
         """Return raw game metadata and user progress from RetroAchievements."""
@@ -315,6 +385,40 @@ class RetroAchievements:
 
         return data
 
+    async def user_game_library(self, username: str) -> list[dict]:
+        """Return every game exposed by a user's completion-progress history."""
+        games = {}
+        offset = 0
+        count = 500
+        while True:
+            data = await self.user_completion_progress(username, count=count, offset=offset)
+            results = data.get("Results") or data.get("results") or []
+            if not isinstance(results, list):
+                raise ValueError("Unexpected RetroAchievements completion progress response")
+            for game in results:
+                if not isinstance(game, dict):
+                    continue
+                game_id = int(game.get("GameID") or game.get("gameId") or 0)
+                if not game_id:
+                    continue
+                image = game.get("ImageIcon") or game.get("imageIcon")
+                total_achievements = int(game.get("MaxPossible") or game.get("maxPossible") or 0)
+                hardcore_achievements = int(game.get("NumAwardedHardcore") or game.get("numAwardedHardcore") or 0)
+                games[game_id] = {
+                    "game_id": game_id,
+                    "game_title": game.get("Title") or game.get("title") or f"Game #{game_id}",
+                    "game_image": urljoin(RA_BASE_URL, image) if image else None,
+                    "console": game.get("ConsoleName") or game.get("consoleName"),
+                    "hardcore_achievements": hardcore_achievements,
+                    "total_achievements": total_achievements,
+                    "completion_percentage": (hardcore_achievements / total_achievements) * 100 if total_achievements else 0,
+                }
+            total = int(data.get("Total") or data.get("total") or len(results))
+            offset += len(results)
+            if not results or offset >= total:
+                break
+        return sorted(games.values(), key=lambda game: game["game_title"].lower())
+
     async def hardcore_game_awards(self, username: str, fetch_all: bool = False) -> dict[str, list[dict]]:
         """Return canonical Hardcore beaten and mastery awards from completion progress."""
         awards = {"beaten": [], "masteries": []}
@@ -402,14 +506,14 @@ class RetroAchievements:
         )
 
         image = (
-            game_progress.get("ImageIngame")
-            or game_progress.get("imageIngame")
+            game_progress.get("ImageIcon")
+            or game_progress.get("imageIcon")
             or game_progress.get("ImageTitle")
             or game_progress.get("imageTitle")
             or game_progress.get("ImageBoxArt")
             or game_progress.get("imageBoxArt")
-            or game_progress.get("ImageIcon")
-            or game_progress.get("imageIcon")
+            or game_progress.get("ImageIngame")
+            or game_progress.get("imageIngame")
             or award.get("game_image")
         )
         if image:
@@ -478,18 +582,39 @@ class RetroAchievements:
         hardcore_points = 0
         retro_points = 0
         achievements_earned = 0
+        played_games = {}
 
         for achievement in achievements:
             hardcore_mode = achievement.get("HardcoreMode", achievement.get("hardcoreMode"))
             if hardcore_mode in (1, "1", True):
-                hardcore_points += int(achievement.get("Points") or achievement.get("points") or 0)
-                retro_points += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
+                points = int(achievement.get("Points") or achievement.get("points") or 0)
+                retro = int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
+                hardcore_points += points
+                retro_points += retro
                 achievements_earned += 1
+                game_id = int(achievement.get("GameID") or achievement.get("gameId") or 0)
+                if game_id:
+                    game_image = achievement.get("GameIcon") or achievement.get("gameIcon")
+                    if game_image:
+                        game_image = urljoin(RA_BASE_URL, game_image)
+                    game = played_games.setdefault(game_id, {
+                        "game_id": game_id,
+                        "game_title": achievement.get("GameTitle") or achievement.get("gameTitle") or f"Game #{game_id}",
+                        "game_image": game_image,
+                        "console": achievement.get("ConsoleName") or achievement.get("consoleName"),
+                        "achievements_earned": 0,
+                        "hardcore_points": 0,
+                        "retro_points": 0,
+                    })
+                    game["achievements_earned"] += 1
+                    game["hardcore_points"] += points
+                    game["retro_points"] += retro
 
         return {
             "hardcore_points": hardcore_points,
             "retro_points": retro_points,
             "achievements_earned": achievements_earned,
+            "played_games": sorted(played_games.values(), key=lambda game: game["game_title"].lower()),
         }
 
     async def recent_hardcore_achievements(
@@ -546,6 +671,7 @@ class RetroAchievements:
                     "achievement_badge": badge_image,
                     "game_title": achievement.get("GameTitle") or achievement.get("gameTitle") or "Unknown Game",
                     "game_id": int(achievement.get("GameID") or achievement.get("gameId") or 0),
+                    "console": achievement.get("ConsoleName") or achievement.get("consoleName"),
                     "points": int(achievement.get("Points") or achievement.get("points") or 0),
                     "retro_points": int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0),
                     "unlock_time": unlock_time,

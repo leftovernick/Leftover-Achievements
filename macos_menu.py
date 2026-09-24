@@ -13,18 +13,29 @@ from urllib.request import Request, urlopen
 from AppKit import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
+    NSBackingStoreBuffered,
     NSImage,
     NSMenu,
     NSMenuItem,
+    NSMakeRect,
     NSPasteboard,
     NSPasteboardTypeString,
     NSStatusBar,
     NSTerminateLater,
     NSTerminateNow,
     NSVariableStatusItemLength,
+    NSViewHeightSizable,
+    NSViewWidthSizable,
+    NSWindow,
+    NSWindowCollectionBehaviorFullScreenPrimary,
+    NSWindowStyleMaskClosable,
+    NSWindowStyleMaskMiniaturizable,
+    NSWindowStyleMaskResizable,
+    NSWindowStyleMaskTitled,
     NSWorkspace,
 )
-from Foundation import NSObject, NSTimer, NSURL
+from Foundation import NSObject, NSTimer, NSURL, NSURLRequest
+from WebKit import WKAudiovisualMediaTypeNone, WKWebView, WKWebViewConfiguration
 
 from launcher import backend_urls, configure_logging, create_backend_server
 from runtime import AlreadyRunningError, local_port_in_use, runtime
@@ -48,6 +59,9 @@ class MenuBarDelegate(NSObject):
         self.update_status_item = None
         self.notification_status_item = None
         self.view_update_item = None
+        self.open_display_item = None
+        self.display_window = None
+        self.display_web_view = None
         self.update_url: str | None = None
 
     def applicationDidFinishLaunching_(self, _notification):
@@ -103,7 +117,9 @@ class MenuBarDelegate(NSObject):
         menu.addItem_(self.server_status_item)
         menu.addItem_(NSMenuItem.separatorItem())
         menu.addItem_(self._menu_item("Open Dashboard", "openDashboard:"))
-        menu.addItem_(self._menu_item("Open Display", "openDisplay:"))
+        self.open_display_item = self._menu_item("Open Display Window", "openDisplay:")
+        self.open_display_item.setEnabled_(False)
+        menu.addItem_(self.open_display_item)
         menu.addItem_(self._menu_item("Copy Dashboard Address", "copyDashboardAddress:"))
         menu.addItem_(NSMenuItem.separatorItem())
 
@@ -157,14 +173,17 @@ class MenuBarDelegate(NSObject):
             return
         if self.backend_error:
             self._set_server_status("Server: Failed")
+            self.open_display_item.setEnabled_(False)
             return
         if self.backend_thread is not None and not self.backend_thread.is_alive():
             self.backend_error = "The backend stopped unexpectedly."
             self.logger.error("Backend failure: %s", self.backend_error)
             self._set_server_status("Server: Failed")
+            self.open_display_item.setEnabled_(False)
             return
         if self.server is not None and self.server.started:
             self._set_server_status("Server: Running")
+            self.open_display_item.setEnabled_(True)
             if not self.backend_ready_logged:
                 self.backend_ready_logged = True
                 self.logger.info("Packaged backend is ready.")
@@ -172,6 +191,7 @@ class MenuBarDelegate(NSObject):
                 self._request_notification_status()
             return
         self._set_server_status("Server: Starting…")
+        self.open_display_item.setEnabled_(False)
 
     def _set_server_status(self, title: str):
         if self.server_status_item is not None and self.server_status_item.title() != title:
@@ -281,7 +301,48 @@ class MenuBarDelegate(NSObject):
         self._open_url(self.local_url)
 
     def openDisplay_(self, _sender):
-        self._open_url(f"http://127.0.0.1:{runtime.port}/display")
+        if self.server is None or not self.server.started or self.shutting_down:
+            return
+        if self.display_window is None:
+            style = (
+                NSWindowStyleMaskTitled
+                | NSWindowStyleMaskClosable
+                | NSWindowStyleMaskMiniaturizable
+                | NSWindowStyleMaskResizable
+            )
+            window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, 1280, 720), style, NSBackingStoreBuffered, False
+            )
+            window.setTitle_("LeftoverAchievements Display")
+            window.setCollectionBehavior_(NSWindowCollectionBehaviorFullScreenPrimary)
+            window.center()
+            window.setDelegate_(self)
+            configuration = WKWebViewConfiguration.alloc().init()
+            configuration.setMediaTypesRequiringUserActionForPlayback_(
+                WKAudiovisualMediaTypeNone
+            )
+            web_view = WKWebView.alloc().initWithFrame_configuration_(
+                window.contentView().bounds(), configuration
+            )
+            web_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+            window.setContentView_(web_view)
+            self.display_window = window
+            self.display_web_view = web_view
+            web_view.loadRequest_(
+                NSURLRequest.requestWithURL_(
+                    NSURL.URLWithString_(f"http://127.0.0.1:{runtime.port}/display")
+                )
+            )
+        self.display_window.makeKeyAndOrderFront_(None)
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+    def windowWillClose_(self, notification):
+        if notification.object() != self.display_window:
+            return
+        self.display_window.setDelegate_(None)
+        self.display_web_view.stopLoading()
+        self.display_web_view = None
+        self.display_window = None
 
     def copyDashboardAddress_(self, _sender):
         address = self.lan_url or self.local_url

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements Display</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=display-weekly-score-1" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=display-catchup-1" />
   </head>
   <body class="pi-display" data-display-scale="{{ display_scale }}">
     <main class="display-shell" data-display-rotation data-display-scale="{{ display_scale }}" data-auto-reload="{{ 'true' if display_auto_reload else 'false' }}" data-audio-enabled="{{ 'true' if audio_enabled else 'false' }}" data-audio-sources='{{ audio_sources|tojson }}'>
@@ -220,6 +220,7 @@
       </div>
     </aside>
 
+    <script src="/static/js/confirm.js"></script>
     <script src="/static/js/display.js?v={{ display_js_version }}"></script>
   </body>
 </html>

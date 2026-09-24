@@ -22,12 +22,28 @@ class UserProfileTests(unittest.IsolatedAsyncioTestCase):
         self.profile = {"ra_ulid": ULID, "canonical_username": "NewName", "avatar": None,
                         "hardcore_points": 1234, "retro_points": 2345}
         self.details = {"awards": {"masteries": [], "beaten": []}, "awards_refreshed_at": now,
-                        "recent": {"game_title": "Last Game", "console": "SNES"}, "recent_refreshed_at": now}
+                        "recent": {"game_title": "Last Game", "console": "SNES"}, "recent_refreshed_at": now,
+                        "achievements": [{"achievement_id": 1, "achievement_title": "Latest Unlock",
+                                          "achievement_description": "Did the thing", "achievement_badge": None,
+                                          "game_id": 2, "game_title": "SNES Game", "console": "SNES",
+                                          "points": 5, "retro_points": 9,
+                                          "unlock_time_iso": now, "unlock_time_display": "Sep 22, 1:00 PM"}],
+                        "achievements_refreshed_at": now}
         self.patches = [
             patch.object(application.db, "get_profile_identity", return_value={"ra_username": "OldName", "ra_ulid": ULID}),
             patch.object(application.db, "get_user_profiles", return_value={"oldname": self.profile}),
             patch.object(application.db, "get_profile_details", return_value=self.details),
             patch.object(application.db, "get_currently_playing_cache", return_value={}),
+            patch.object(application.db, "get_user_game_libraries", return_value={
+                "oldname": {"games": [
+                    {"game_id": 1, "game_title": "NES Game", "console": "NES"},
+                    {"game_id": 2, "game_title": "SNES Game", "console": "SNES"},
+                ], "refreshed_at": now},
+            }),
+            patch.object(application.db, "get_game_metadata", return_value={
+                1: {"genre": "Platformer"}, 2: {"genre": "Action"},
+            }),
+            patch.object(application, "schedule_game_library_refresh_if_needed"),
         ]
         for item in self.patches:
             item.start()
@@ -42,6 +58,16 @@ class UserProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Currently Playing", html)
         self.assertIn("No mastered games yet", html)
         self.assertIn("No beaten games yet", html)
+        self.assertIn("Most Played Consoles", html)
+        self.assertIn("Most Played Genres", html)
+        self.assertIn("Platformer", html)
+        self.assertIn("SNES", html)
+        self.assertIn("All-Time Hardcore Points", html)
+        self.assertIn('id="profile-all-time-chart"', html)
+        self.assertIn('/static/js/user-profile.js', html)
+        self.assertIn("Recent Achievements", html)
+        self.assertIn("Latest Unlock", html)
+        self.assertIn("+5 (9)", html)
 
     async def test_current_game_replaces_recent_game(self):
         cache = {"oldname": {"active": 1, "payload": {"game_title": "Live Game", "console": "NES",

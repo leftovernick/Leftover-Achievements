@@ -8,7 +8,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from database import database as db
-from services.all_time_charts import AllTimeCharts, daily_points, month_ranges, parse_date, weekly_curve_points
+from services.all_time_charts import (
+    AllTimeCharts,
+    daily_points,
+    month_ranges,
+    parse_date,
+    weekly_curve_points,
+)
 
 
 class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
@@ -25,10 +31,14 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
                         "hardcore_points": 123, "retro_points": 999, "avatar": None}
         self.users = [{"ra_username": "Player", "ra_ulid": "ABC"}]
         self.achievements = [
-            {"AchievementID": 1, "Date": "2026-01-08 20:01:00", "HardcoreMode": 1, "Points": 5, "TrueRatio": 9},
-            {"AchievementID": 2, "Date": "2026-01-12 07:59:59", "HardcoreMode": "1", "Points": 10, "TrueRatio": 20},
-            {"AchievementID": 3, "Date": "2026-01-12 08:00:00", "HardcoreMode": 1, "Points": 20, "TrueRatio": 40},
-            {"AchievementID": 4, "Date": "2026-02-02 12:00:00", "HardcoreMode": True, "Points": 25, "TrueRatio": 50},
+            {"AchievementID": 1, "Date": "2026-01-08 20:01:00", "HardcoreMode": 1, "Points": 5, "TrueRatio": 9,
+             "GameID": 10, "GameTitle": "First Game", "GameIcon": "/Images/first.png", "ConsoleName": "NES"},
+            {"AchievementID": 2, "Date": "2026-01-12 07:59:59", "HardcoreMode": "1", "Points": 10, "TrueRatio": 20,
+             "GameID": 10, "GameTitle": "First Game", "GameIcon": "/Images/first.png", "ConsoleName": "NES"},
+            {"AchievementID": 3, "Date": "2026-01-12 08:00:00", "HardcoreMode": 1, "Points": 20, "TrueRatio": 40,
+             "GameID": 20, "GameTitle": "Second Game", "ConsoleName": "SNES"},
+            {"AchievementID": 4, "Date": "2026-02-02 12:00:00", "HardcoreMode": True, "Points": 25, "TrueRatio": 50,
+             "GameID": 30, "GameTitle": "February Game"},
             {"AchievementID": 5, "Date": "2026-01-10 12:00:00", "HardcoreMode": 0, "Points": 100, "TrueRatio": 200},
         ]
         self.client = Mock()
@@ -71,10 +81,26 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["hardcore_points"], 15)
         self.assertEqual(first["retro_points"], 29)
         self.assertEqual(first["achievements_earned"], 2)
+        self.assertEqual(first["played_games"], [{
+            "game_id": 10, "game_title": "First Game",
+            "game_image": "https://retroachievements.org/Images/first.png", "console": "NES",
+            "achievements_earned": 2, "hardcore_points": 15, "retro_points": 29,
+        }])
         self.assertEqual(second["hardcore_points"], 20)
+        self.assertEqual(second["played_games"][0]["game_title"], "Second Game")
         self.assertEqual(db.get_history_rankings("2026-02-09")[0]["hardcore_points"], 0)
         self.assertIsNone(db.get_history_week("2026-02-16"))
         self.assertEqual(self.client.achievements_earned_between.await_count, 2)
+        activity = {day["weekday"]: day for day in payload["weekday_activity"]}
+        self.assertEqual(activity["Monday"]["achievements_earned"], 2)
+        self.assertEqual(activity["Monday"]["eligible_days"], 6)
+        self.assertAlmostEqual(activity["Monday"]["average"], 2 / 6)
+        self.assertEqual(activity["Thursday"]["achievements_earned"], 1)
+        monthly = {month["month"]: month for month in payload["monthly_activity"]}
+        self.assertEqual(monthly["January"]["achievements_earned"], 3)
+        self.assertEqual(monthly["January"]["eligible_months"], 1)
+        self.assertEqual(monthly["January"]["average"], 3)
+        self.assertEqual(monthly["February"]["achievements_earned"], 1)
 
     def test_weekly_curve_uses_cached_daily_totals(self):
         first = {"date": "2026-01-08T20:01:00Z", "hardcore_points": 5, "retro_points": 9}
@@ -85,6 +111,16 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         }}}
         points = weekly_curve_points(rows, first, parse_date("2026-01-20T12:00:00Z"))
         self.assertEqual([point["hardcore_points"] for point in points], [5, 15, 35])
+
+    def test_old_month_cache_without_game_details_is_refreshed(self):
+        row = {
+            "covered_through": "2026-01-31T23:59:59Z",
+            "days": {"2026-01-08": {"hardcore_points": 5, "retro_points": 9,
+                                      "achievements_earned": 1}},
+        }
+        self.assertFalse(self.service.month_is_fresh(
+            row, parse_date("2026-01-31T23:59:59Z"), self.now,
+        ))
 
     async def test_reload_reuses_persisted_cache_without_network_requests(self):
         await self.refresh()
@@ -160,6 +196,40 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marker["game_image"], "game.png")
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT announced FROM processed_beaten_game_events").fetchone()[0], 1)
+
+    def test_chart_award_markers_prefer_canonical_library_icon(self):
+        award = {
+            "username": "Player", "game_id": 88, "awarded_at": "2026-01-12T12:00:00Z",
+            "game_title": "Beaten Game", "game_image": "https://example.test/wrong-ingame.png",
+        }
+        db.save_processed_beaten_game_event(award, announced=True)
+        db.save_user_game_library("Player", [{
+            "game_id": 88, "game_title": "Beaten Game",
+            "game_image": "https://example.test/correct-icon.png",
+        }])
+
+        marker = db.get_recorded_chart_beaten_games(["player"], self.now)["player"][0]
+
+        self.assertEqual(marker["game_image"], "https://example.test/correct-icon.png")
+
+    def test_mastery_metadata_repairs_existing_mastery_and_beaten_images(self):
+        beaten = {"username": "Player", "game_id": 77, "awarded_at": "2026-01-12T11:00:00Z",
+                  "game_title": "Example Game", "game_image": "wrong-beaten.png"}
+        mastery = {**beaten, "awarded_at": "2026-01-12T12:00:00Z", "dedupe_key": "mastery:77",
+                   "game_image": "wrong-mastery.png"}
+        db.save_processed_beaten_game_event(beaten, announced=True)
+        db.save_processed_mastery_event(mastery, announced=True)
+
+        db.update_recorded_mastery_titles([{**mastery, "game_image": "correct-icon.png"}])
+
+        self.assertEqual(
+            db.get_recorded_chart_masteries(["player"], self.now)["player"][0]["game_image"],
+            "correct-icon.png",
+        )
+        self.assertEqual(
+            db.get_recorded_chart_beaten_games(["player"], self.now)["player"][0]["game_image"],
+            "correct-icon.png",
+        )
 
     def test_old_mastery_titles_can_be_filled_without_changing_announcement_state(self):
         award = {"username": "Player", "game_id": 77, "awarded_at": "2026-01-12T12:00:00Z", "dedupe_key": "mastery:77"}
@@ -269,6 +339,54 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(db.get_history_week("2010-01-04"))
         self.assertGreater(db.history_week_count(), 800)
 
+    def test_weekly_charts_only_include_currently_tracked_users(self):
+        db.add_tracked_user("First", "ONE")
+        db.add_tracked_user("Second", "TWO")
+        db.save_completed_history_snapshots([
+            {
+                "week_start": "2026-01-05", "week_end": "2026-01-11",
+                "user_key": "ulid:one", "ra_username": "First", "canonical_username": "First",
+                "ra_ulid": "ONE", "avatar": None, "hardcore_points": 10,
+                "retro_points": 20, "achievements_earned": 1,
+            },
+            {
+                "week_start": "2026-01-05", "week_end": "2026-01-11",
+                "user_key": "ulid:two", "ra_username": "OldSecondName", "canonical_username": "Second",
+                "ra_ulid": "TWO", "avatar": None, "hardcore_points": 20,
+                "retro_points": 40, "achievements_earned": 2,
+            },
+        ])
+        rankings = db.get_weekly_chart_history(8)[0]["rankings"]
+        self.assertEqual([(row["canonical_username"], row["rank"]) for row in rankings],
+                         [("Second", 1), ("First", 2)])
+
+        second = next(user for user in db.get_tracked_users() if user["ra_ulid"] == "TWO")
+        db.remove_tracked_user(second["id"])
+
+        rankings = db.get_weekly_chart_history(8)[0]["rankings"]
+        self.assertEqual([(row["canonical_username"], row["rank"]) for row in rankings], [("First", 1)])
+        self.assertEqual(len(db.get_history_rankings("2026-01-05")), 2)
+
+    def test_current_week_cache_round_trips_played_games(self):
+        played_games = [{
+            "game_id": 12, "game_title": "Weekly Game", "achievements_earned": 3,
+            "hardcore_points": 25, "retro_points": 60,
+        }]
+        db.save_weekly_rankings([{
+            "ra_username": "Player", "hardcore_points": 25, "retro_points": 60,
+            "played_games": played_games,
+        }], "2026-02-16T08:00:00+00:00")
+        cached = db.get_weekly_rankings("2026-02-16T08:00:00+00:00")["player"]
+        self.assertEqual(cached["played_games"], played_games)
+
+    def test_all_time_game_library_round_trips(self):
+        games = [{"game_id": 9, "game_title": "Library Game", "game_image": None, "console": "NES"}]
+        db.save_user_game_library("Player", games)
+        cached = db.get_user_game_libraries(["player"])["player"]
+        self.assertEqual(cached["games"], games)
+        db.save_game_metadata({"game_id": 9, "game_title": "Library Game", "console": "NES", "genre": "Action"})
+        self.assertEqual(db.get_game_metadata({9})[9]["genre"], "Action")
+
     def test_ui_toggle_is_local_and_shared_axis_starts_at_zero(self):
         root = Path(__file__).resolve().parents[1]
         javascript = (root / "static/js/charts.js").read_text()
@@ -276,8 +394,13 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('class="panel chart-panel chart-all-time" data-chart-all-time>', template)
         self.assertNotIn('data-chart-range="all"', template)
         self.assertIn('data-chart-metric="retro_points"', template)
-        self.assertIn('styles.css?v=charts-timeline-play-1', template)
+        self.assertIn('styles.css?v=activity-toggle-1', template)
         self.assertIn('data-timeline-play', template)
+        self.assertIn('id="achievement-activity-chart"', template)
+        self.assertLess(template.index('id="all-time-score-chart"'), template.index('id="achievement-activity-chart"'))
+        self.assertIn('data-activity-view="weekday"', template)
+        self.assertIn('data-activity-view="monthly"', template)
+        self.assertIn("renderActivity(data)", javascript)
         self.assertIn("if (allTimeData) renderAllTime(allTimeData)", javascript)
         self.assertIn("loadAllTime();", javascript)
         self.assertIn("options.scales.y.min = 0", javascript)

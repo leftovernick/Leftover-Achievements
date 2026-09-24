@@ -20,7 +20,7 @@ a = Analysis(
         (version_file, "."),
         (architecture_file, "."),
     ],
-    hiddenimports=collect_submodules("uvicorn") + ["AppKit", "Foundation", "UserNotifications", "objc"],
+    hiddenimports=collect_submodules("uvicorn") + ["AppKit", "Foundation", "WebKit", "UserNotifications", "objc"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

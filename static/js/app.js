@@ -4,6 +4,24 @@
 
   const REFRESH_INTERVAL_MS = 10 * 1000;
   let refreshInFlight = null;
+  let categoryScope = 'weekly';
+
+  const applyCategoryScope = () => {
+    document.querySelectorAll('[data-category-scope]').forEach((button) => {
+      const active = button.dataset.categoryScope === categoryScope;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    document.querySelectorAll('[data-category-content]').forEach((content) => {
+      content.hidden = content.dataset.categoryContent !== categoryScope;
+    });
+    document.querySelectorAll('[data-category-note]').forEach((note) => {
+      note.hidden = note.dataset.categoryNote !== categoryScope;
+    });
+    document.querySelectorAll('[data-category-period]').forEach((label) => {
+      label.textContent = categoryScope === 'weekly' ? 'This week' : 'All time';
+    });
+  };
 
   const refreshDashboardActivity = () => {
     if (document.visibilityState !== 'visible') return Promise.resolve();
@@ -21,6 +39,7 @@
           const replacement = snapshot.querySelector(`[data-dashboard-refresh-section="${key}"]`);
           if (replacement) section.replaceWith(document.importNode(replacement, true));
         });
+        applyCategoryScope();
       })
       .catch((error) => console.info('Could not refresh dashboard activity', error))
       .finally(() => { refreshInFlight = null; });
@@ -38,6 +57,13 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') refreshDashboardActivity();
   });
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-category-scope]');
+    if (!button) return;
+    categoryScope = button.dataset.categoryScope;
+    applyCategoryScope();
+  });
+  applyCategoryScope();
   refreshDashboardActivity();
   scheduleRefresh();
 })();

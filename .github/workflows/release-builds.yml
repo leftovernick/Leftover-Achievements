@@ -323,6 +323,12 @@ jobs:
           python -c 'from packaging.version import Version; print(Version("0.1.0"))'
           python -c 'import sys; from pathlib import Path; expected=Path(".venv/Scripts/python.exe").resolve(); actual=Path(sys.executable).resolve(); assert actual == expected, f"Expected {expected}, got {actual}"'
 
+      - name: Verify Windows tray notification adapter
+        shell: pwsh
+        run: |
+          python -c 'import pystray; from pystray._util import win32; assert hasattr(pystray.Icon, "_message"); assert win32.NIF_INFO == 0x10'
+          python -m unittest tests.test_windows_notifications tests.test_windows_tray -q
+
       - name: Verify stable release tag and exact source revision
         shell: pwsh
         run: |
@@ -350,6 +356,7 @@ jobs:
           }
           $env:LEFTOVER_DATA_DIR = Join-Path $env:RUNNER_TEMP "leftover-smoke-windows"
           $env:LEFTOVER_PORT = "18765"
+          $env:LEFTOVER_HEADLESS = "1"
           $Server = Start-Process -FilePath $Executable -PassThru
           try {
             $Status = $null
