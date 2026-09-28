@@ -671,6 +671,68 @@ def save_weekly_rankings(rankings: list[dict], week_start: str):
         conn.commit()
 
 
+def apply_achievement_to_weekly_ranking(ra_username: str, week_start: str, achievement: dict) -> bool:
+    """Apply one newly discovered unlock to an existing live-week cache row."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT hardcore_points, retro_points, played_games_json
+            FROM weekly_rankings
+            WHERE ra_username = ? AND week_start = ?
+            """,
+            (ra_username, week_start),
+        )
+        row = cur.fetchone()
+        if row is None or row["played_games_json"] is None:
+            return False
+
+        try:
+            played_games = json.loads(row["played_games_json"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+
+        points = int(achievement.get("points") or 0)
+        retro_points = int(achievement.get("retro_points") or 0)
+        game_id = int(achievement.get("game_id") or 0)
+        game = next(
+            (item for item in played_games if int(item.get("game_id") or 0) == game_id),
+            None,
+        )
+        if game is None:
+            game = {
+                "game_id": game_id,
+                "game_title": achievement.get("game_title") or f"Game #{game_id}",
+                "game_image": achievement.get("game_image"),
+                "console": achievement.get("console"),
+                "achievements_earned": 0,
+                "hardcore_points": 0,
+                "retro_points": 0,
+            }
+            played_games.append(game)
+
+        game["achievements_earned"] = int(game.get("achievements_earned") or 0) + 1
+        game["hardcore_points"] = int(game.get("hardcore_points") or 0) + points
+        game["retro_points"] = int(game.get("retro_points") or 0) + retro_points
+        cur.execute(
+            """
+            UPDATE weekly_rankings
+            SET hardcore_points = ?, retro_points = ?, refreshed_at = ?, played_games_json = ?
+            WHERE ra_username = ? AND week_start = ?
+            """,
+            (
+                int(row["hardcore_points"]) + points,
+                int(row["retro_points"]) + retro_points,
+                datetime.now(timezone.utc).isoformat(),
+                json.dumps(played_games),
+                ra_username,
+                week_start,
+            ),
+        )
+        conn.commit()
+        return True
+
+
 def get_game_metadata(game_ids: list[int] | set[int]) -> dict[int, dict]:
     if not game_ids:
         return {}

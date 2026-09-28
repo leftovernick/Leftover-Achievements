@@ -13,6 +13,33 @@ PROJECT_ROOT = application.runtime.resource_root
 
 
 class LiveActivityRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_unlock_updates_weekly_cache_before_recent_activity(self):
+        now = datetime.now().astimezone()
+        activity = {
+            "dedupe_key": "Player:1:now", "username": "Player", "achievement_id": 1,
+            "achievement_title": "Achievement", "achievement_description": "", "achievement_badge": None,
+            "game_id": 95, "game_title": "Game", "console": "Wii", "points": 50,
+            "retro_points": 124, "unlock_time": now, "unlock_time_iso": now.isoformat(),
+            "unlock_time_display": "now", "hardcore": True,
+        }
+        calls = []
+        with (
+            patch.object(application, "fetch_recent_hardcore_achievements", new=AsyncMock(return_value=[activity])),
+            patch.object(application.db, "achievement_poll_initialized", return_value=True),
+            patch.object(application.db, "achievement_unlock_seen", return_value=False),
+            patch.object(application.db, "apply_achievement_to_weekly_ranking",
+                         side_effect=lambda *args: calls.append("weekly") or True) as apply_weekly,
+            patch.object(application, "achievement_completion_ranges", new=AsyncMock(return_value={})),
+            patch.object(application.db, "save_processed_achievement_unlock"),
+            patch.object(application.db, "save_recent_activity",
+                         side_effect=lambda *args, **kwargs: calls.append("recent")),
+            patch.object(application, "publish_display_event", new=AsyncMock()),
+        ):
+            await application.process_achievement_unlocks_for_user("Player")
+
+        apply_weekly.assert_called_once()
+        self.assertEqual(calls, ["weekly", "recent"])
+
     def test_recent_active_snapshot_remains_visible_during_revalidation(self):
         cached = {
             "active": 1,

@@ -379,6 +379,27 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         cached = db.get_weekly_rankings("2026-02-16T08:00:00+00:00")["player"]
         self.assertEqual(cached["played_games"], played_games)
 
+    def test_new_unlock_updates_live_week_points_and_game_totals_together(self):
+        week_start = "2026-02-16T00:00:00-08:00"
+        db.save_weekly_ranking("Player", 55, 127, week_start, [{
+            "game_id": 95, "game_title": "New Super Mario Bros. Wii",
+            "game_image": None, "console": "Wii", "achievements_earned": 3,
+            "hardcore_points": 55, "retro_points": 127,
+        }])
+
+        applied = db.apply_achievement_to_weekly_ranking("player", week_start, {
+            "game_id": 95, "game_title": "New Super Mario Bros. Wii", "console": "Wii",
+            "points": 50, "retro_points": 124,
+        })
+
+        self.assertTrue(applied)
+        cached = db.get_weekly_rankings(week_start)["player"]
+        self.assertEqual(cached["hardcore_points"], 105)
+        self.assertEqual(cached["retro_points"], 251)
+        self.assertEqual(cached["played_games"][0]["achievements_earned"], 4)
+        self.assertEqual(cached["played_games"][0]["hardcore_points"], 105)
+        self.assertEqual(cached["played_games"][0]["retro_points"], 251)
+
     def test_all_time_game_library_round_trips(self):
         games = [{"game_id": 9, "game_title": "Library Game", "game_image": None, "console": "NES"}]
         db.save_user_game_library("Player", games)

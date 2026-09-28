@@ -842,6 +842,24 @@ async def refresh_weekly_rankings(users: list[dict], week_start: datetime, week_
                 logger.warning("Could not load metadata for game %s: %s: %s", game_id, type(exc).__name__, exc)
 
 
+async def refresh_weekly_ranking_for_user(username: str, week_start: datetime, week_end: datetime) -> bool:
+    """Replace one player's live-week cache from the authoritative range API."""
+    try:
+        points = await ra_client.points_earned_between(username, week_start, week_end)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("Could not refresh weekly ranking for %s: %s: %s", username, type(exc).__name__, exc)
+        return False
+
+    db.save_weekly_ranking(
+        username,
+        points.get("hardcore_points", 0),
+        points.get("retro_points", 0),
+        week_start.isoformat(),
+        points.get("played_games", []),
+    )
+    return True
+
+
 def schedule_game_library_refresh_if_needed(users: list[dict], libraries: dict):
     global game_library_refresh_task
     if not users or (game_library_refresh_task and not game_library_refresh_task.done()):
@@ -1242,6 +1260,18 @@ async def process_achievement_unlocks_for_user(username: str, recent_minutes: in
         return
 
     new_activities = [activity for activity in activities if not db.achievement_unlock_seen(activity["dedupe_key"])]
+    week_start, week_end = current_week_range()
+    current_week_activities = [
+        activity for activity in new_activities
+        if week_start <= activity["unlock_time"] <= week_end
+    ]
+    for activity in current_week_activities:
+        if not db.apply_achievement_to_weekly_ranking(username, week_start.isoformat(), activity):
+            # A missing/legacy cache row cannot be incremented safely because the
+            # polling lookback may not contain every unlock from the current week.
+            await refresh_weekly_ranking_for_user(username, week_start, week_end)
+            break
+
     cutoff = datetime.now(timezone.utc) - CATCHUP_AGE
     stale = [activity for activity in new_activities if activity["unlock_time"] < cutoff]
     stale_keys = {activity["dedupe_key"] for activity in stale}
