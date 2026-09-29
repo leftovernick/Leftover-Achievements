@@ -90,7 +90,7 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(UpdateError, "Tracked local changes"):
             await updater.install()
 
-    async def test_packaged_build_uses_embedded_version_and_disables_self_install(self):
+    async def test_packaged_macos_build_uses_embedded_version_and_enables_self_install(self):
         data = self.root / "data"
         environment = RuntimeEnvironment(
             mode=RuntimeMode.MACOS_PACKAGED,
@@ -125,7 +125,7 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         )
         state = await updater.check()
         self.assertTrue(state["update_available"])
-        self.assertFalse(state["install_supported"])
+        self.assertTrue(state["install_supported"])
         self.assertEqual(state["installed_version"], "v1.1.0")
         self.assertEqual(
             state["latest_release_asset_name"],
@@ -133,8 +133,57 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(state["latest_release_asset_url"].endswith("/package.zip"))
         self.assertEqual(state["runtime_architecture"], "arm64")
-        with self.assertRaisesRegex(UpdateError, "not yet supported"):
-            await updater.install()
+
+    async def test_packaged_macos_install_launches_bundle_replacement_helper(self):
+        data = self.root / "data"
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        (scripts / "update-macos.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+        environment = RuntimeEnvironment(
+            mode=RuntimeMode.MACOS_PACKAGED,
+            resource_root=self.root,
+            data_dir=data,
+            logs_dir=data / "logs",
+            mutable_audio_dir=data / "audio",
+            installed_version="v1.1.0",
+            architecture="arm64",
+        )
+        environment.ensure_runtime_directories()
+
+        async def fetch_release(_repository: str):
+            payload = release("v1.2.0")
+            payload["assets"] = [{
+                "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
+                "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/update.zip",
+            }]
+            return payload
+
+        updater = ApplicationUpdater(
+            self.root,
+            repository="example/project",
+            release_fetcher=fetch_release,
+            runtime_environment=environment,
+        )
+        updater._watch_install = AsyncMock()
+        process = MagicMock()
+        bundle = Path("/Applications/LeftoverAchievements.app")
+        with (
+            patch.object(updater, "_macos_bundle_path", return_value=bundle),
+            patch("services.updater.subprocess.Popen", return_value=process) as popen,
+            patch("services.updater.os.getpid", return_value=4321),
+        ):
+            state = await updater.install()
+
+        self.assertTrue(state["installing"])
+        command = popen.call_args.args[0]
+        self.assertEqual(command[2], str(bundle))
+        self.assertEqual(command[3:7], [
+            "v1.2.0",
+            "https://github.com/example/project/releases/download/v1.2.0/update.zip",
+            "arm64",
+            "4321",
+        ])
+        self.assertEqual(command[7], str(environment.update_status_path))
 
     async def test_intel_macos_build_selects_only_x64_release_asset(self):
         data = self.root / "data"

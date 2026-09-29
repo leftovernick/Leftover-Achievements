@@ -44,6 +44,24 @@ After setup, the main pages are:
 - History: http://127.0.0.1:8000/history
 - Charts: http://127.0.0.1:8000/charts
 
+## Hubs and client devices
+
+Every installation can run independently or use another LeftoverAchievements
+installation as its hub. During first-run setup, choose **Connect to an existing
+hub** and enter that device's LAN address, such as `192.168.1.50:8000` or
+`leftover-pi.local:8000`.
+
+The hub can be a Raspberry Pi, Mac, Windows PC, or development server. It owns the
+active database, API key, settings, and RetroAchievements polling jobs. Connected
+devices load the hub's dashboard and display without making their own
+RetroAchievements API calls.
+
+Each client retains its local database while connected. Open
+`http://127.0.0.1:8000/connection` on that device (or choose **Connection
+Settings** from the macOS/Windows menu) to disconnect, resume or set up its local
+instance, or select a different hub. Reconnecting later does not erase or merge
+either database. Multiple independent hubs can run on the same network.
+
 ### Full account history and charts
 
 Charts → **All Time** shows every tracked player on one cumulative score timeline,
@@ -104,10 +122,12 @@ exits cleanly when the instance lock is already owned. On macOS, a backend start
 failure leaves the menu bar or tray app available with `Server: Failed` instead of
 appearing as an unresponsive foreground app.
 
-Packaged builds can check GitHub Releases and show newer versions. Self-replacement
-is deliberately not implemented yet: **Update Now** is hidden and Settings explains
-that the matching release ZIP must be downloaded manually. Packaged builds never run
-the Pi git checkout, pip installation, sudo, or systemd update path.
+Packaged builds can check GitHub Releases and show newer versions. macOS and Pi builds
+can install an available update from Settings. The macOS updater downloads the native
+update package, validates its version, architecture, and application identity, replaces
+the installed app with rollback protection, and reopens it. Windows updates remain a
+manual download. Packaged desktop builds never run the Pi git checkout, pip installation,
+sudo, or systemd update path.
 
 ### Build requirements
 
@@ -172,12 +192,14 @@ On an Apple Silicon Mac, build the native arm64 package:
 MACOS_ARCH=arm64 ./scripts/build-macos.sh
 ```
 
-This produces
-`dist/releases/LeftoverAchievements-macOS-arm64-v1.2.0.zip`. The contained `.app`
-runs without a main window or Dock icon. It is not Developer ID signed or notarized,
-so downloaded builds may require **Control-click → Open** in Finder or approval in
-**System Settings → Privacy & Security**. Signing and notarization are intentionally
-deferred.
+This produces a user installer at
+`dist/releases/LeftoverAchievements-macOS-arm64.dmg` and an automatic-update package
+at `dist/releases/LeftoverAchievements-macOS-arm64-v1.2.0.zip`. Open the DMG and drag
+the stable, custom-icon `LeftoverAchievements.app` onto its Applications shortcut.
+The app runs without a main window or Dock icon. It is not Developer ID signed or
+notarized, so downloaded builds may require **Control-click → Open** in Finder or
+approval in **System Settings → Privacy & Security**. Signing and notarization are
+intentionally deferred.
 
 On an Intel Mac, build the native x64 package instead:
 
@@ -185,14 +207,14 @@ On an Intel Mac, build the native x64 package instead:
 MACOS_ARCH=x64 ./scripts/build-macos.sh
 ```
 
-This produces
-`dist/releases/LeftoverAchievements-macOS-x64-v1.2.0.zip`. The build script refuses
-to cross-compile: `arm64` must run on Apple Silicon and `x64` must run on Intel.
+This produces `dist/releases/LeftoverAchievements-macOS-x64.dmg` plus the versioned
+ZIP used by automatic updates. The build script refuses to cross-compile: `arm64`
+must run on Apple Silicon and `x64` must run on Intel.
 
 Choose the macOS download that matches the computer:
 
-- Macs with M1, M2, M3, M4, or newer Apple Silicon use the **macOS arm64** ZIP.
-- Macs with an Intel processor use the **macOS x64** ZIP.
+- Macs with M1, M2, M3, M4, or newer Apple Silicon use the **macOS arm64** DMG.
+- Macs with an Intel processor use the **macOS x64** DMG.
 
 These are separate native builds, not a combined universal2 application.
 
@@ -218,8 +240,8 @@ Silicon macOS on `macos-15`, Intel macOS on `macos-15-intel`, and Windows x64 on
 exact tag, validates its archive, and attaches one predictably named
 asset to the same Release:
 
-- `LeftoverAchievements-macOS-arm64-v1.2.0.zip`
-- `LeftoverAchievements-macOS-x64-v1.2.0.zip`
+- `LeftoverAchievements-macOS-arm64.dmg` and its versioned update ZIP
+- `LeftoverAchievements-macOS-x64.dmg` and its versioned update ZIP
 - `LeftoverAchievements-Windows-x64-v1.2.0.zip`
 - `LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz`
 
@@ -513,7 +535,8 @@ When a build is ready for users:
 Publishing the Release is the explicit **ship this version** action. Ordinary commits
 and pushes never create device updates or desktop packages. After publication, a Pi
 detects the tag during its next check and waits for the user to install it from Quick
-Settings or web Settings. Packaged desktop installations detect the matching attached
-ZIP and direct the user to download it manually. No command-line Git is needed to
-publish releases. Packaged Pi paths are stable and do not need editing when releases
+Settings or web Settings. Packaged macOS installations detect the matching attached
+ZIP and can replace themselves from Settings. Windows installations still direct the
+user to download their matching ZIP manually. No command-line Git is needed to publish
+releases. Packaged app and Pi paths are stable and do not need editing when releases
 change.

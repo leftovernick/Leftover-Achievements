@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 from runtime import runtime
+from instance_config import HUB_PROTOCOL_VERSION, instance_config, normalize_hub_url
 
 
 runtime.ensure_runtime_directories()
@@ -36,6 +37,30 @@ from services.updater import ApplicationUpdater, UpdateError
 
 
 app = FastAPI(title="LeftoverAchievements Display")
+
+
+def remote_page_url(request: Request) -> str | None:
+    """Return the equivalent page on the configured hub for browser requests."""
+    hub_url = instance_config.hub_url
+    if not hub_url or request.method not in {"GET", "HEAD"}:
+        return None
+    path = request.url.path
+    is_frontend_page = (
+        path in {"/", "/display", "/history", "/charts", "/users", "/admin"}
+        or path.startswith("/users/")
+    )
+    if not is_frontend_page:
+        return None
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"{hub_url}{path}{query}"
+
+
+@app.middleware("http")
+async def use_configured_hub_for_frontend(request: Request, call_next):
+    destination = remote_page_url(request)
+    if destination:
+        return RedirectResponse(destination, status_code=307)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -206,6 +231,40 @@ def onboarding_redirect(step: int, message: str | None = None, status: str | Non
     if status:
         params["status"] = status
     return RedirectResponse(url=f"/onboarding?{urlencode(params)}", status_code=303)
+
+
+def connection_redirect(message: str, status: str = "error") -> RedirectResponse:
+    return RedirectResponse(
+        url=f"/connection?{urlencode({'message': message, 'status': status})}",
+        status_code=303,
+    )
+
+
+async def validate_hub_connection(value: str) -> tuple[str | None, str | None]:
+    try:
+        hub_url = normalize_hub_url(value)
+    except ValueError as exc:
+        return None, str(exc)
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=6)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{hub_url}/api/hub/status") as response:
+                if response.status != 200:
+                    return None, f"The device responded with HTTP {response.status}, not a hub status."
+                payload = await response.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
+        return None, "We couldn't reach a LeftoverAchievements hub at that address."
+
+    if not isinstance(payload, dict) or payload.get("product") != "LeftoverAchievements":
+        return None, "That address is not a LeftoverAchievements instance."
+    if payload.get("protocol_version") != HUB_PROTOCOL_VERSION:
+        return None, "That LeftoverAchievements instance uses an incompatible hub protocol."
+    if payload.get("role") != "hub":
+        return None, "That device is already connected to another hub. Connect to its hub directly."
+    if payload.get("instance_id") == instance_config.instance_id():
+        return None, "This device cannot connect to itself."
+    return hub_url, None
 
 
 def ra_api_key_source() -> str | None:
@@ -1444,6 +1503,58 @@ def parse_iso_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+@app.get("/api/hub/status")
+async def hub_status():
+    return {
+        "product": "LeftoverAchievements",
+        "protocol_version": HUB_PROTOCOL_VERSION,
+        "instance_id": instance_config.instance_id(),
+        "role": instance_config.role,
+        "setup_complete": db.setup_complete(),
+    }
+
+
+@app.get("/connection")
+async def connection_settings(
+    request: Request,
+    message: str | None = None,
+    status: str | None = None,
+):
+    return templates.TemplateResponse(
+        request=request,
+        name="connection.html",
+        context={
+            "hub_url": instance_config.hub_url,
+            "local_setup_complete": db.setup_complete(),
+            "message": message,
+            "message_status": status,
+        },
+    )
+
+
+@app.post("/connection/connect")
+async def connect_to_hub(hub_address: str = Form(...)):
+    hub_url, error = await validate_hub_connection(hub_address)
+    if error or not hub_url:
+        return connection_redirect(error or "The hub connection could not be saved.")
+    instance_config.connect(hub_url)
+    await stop_data_polling()
+    return RedirectResponse(url=hub_url, status_code=303)
+
+
+@app.post("/connection/disconnect")
+async def disconnect_from_hub():
+    instance_config.disconnect()
+    if db.setup_complete():
+        await start_background_polling()
+        return RedirectResponse(url="/", status_code=303)
+    return onboarding_redirect(
+        1,
+        "Disconnected from the hub. Set up this device as its own instance, or connect to another hub.",
+        "success",
+    )
+
+
 @app.get("/")
 async def dashboard(request: Request):
     if not db.setup_complete():
@@ -1464,6 +1575,8 @@ async def onboarding(
     message: str | None = None,
     status: str | None = None,
 ):
+    if instance_config.hub_url:
+        return RedirectResponse(url="/connection", status_code=307)
     step = max(1, min(5, step))
     if step >= 3 and ra_connection_status() != "connected":
         step = 2
@@ -1505,6 +1618,16 @@ async def onboarding(
 @app.post("/onboarding/welcome")
 async def onboarding_welcome():
     return onboarding_redirect(2)
+
+
+@app.post("/onboarding/hub")
+async def onboarding_hub(hub_address: str = Form(...)):
+    hub_url, error = await validate_hub_connection(hub_address)
+    if error or not hub_url:
+        return onboarding_redirect(1, error or "The hub connection could not be saved.", "error")
+    instance_config.connect(hub_url)
+    await stop_data_polling()
+    return RedirectResponse(url=hub_url, status_code=303)
 
 
 @app.post("/onboarding/api-key")
@@ -1869,7 +1992,7 @@ async def start_background_polling():
     global achievement_poll_task, current_activity_poll_task
     display_shutdown_event.clear()
     application_updater.start()
-    if not db.setup_complete():
+    if instance_config.hub_url or not db.setup_complete():
         return
     schedule_history_backfill()
     if not achievement_poll_task or achievement_poll_task.done():
@@ -1878,11 +2001,9 @@ async def start_background_polling():
         current_activity_poll_task = create_logged_task(current_activity_poll_loop(), "current activity polling")
 
 
-@app.on_event("shutdown")
-async def stop_update_polling():
-    begin_application_shutdown()
+async def stop_data_polling():
+    """Stop work that reads or changes the local data set, leaving app updates alive."""
     await all_time_charts.stop()
-    await application_updater.stop()
     background_tasks = [
         weekly_refresh_task,
         game_library_refresh_task,
@@ -1897,6 +2018,13 @@ async def stop_update_polling():
         task.cancel()
     if active_tasks:
         await asyncio.gather(*active_tasks, return_exceptions=True)
+
+
+@app.on_event("shutdown")
+async def stop_update_polling():
+    begin_application_shutdown()
+    await stop_data_polling()
+    await application_updater.stop()
 
 
 def weekly_game_category_stats(

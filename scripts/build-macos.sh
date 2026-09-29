@@ -53,25 +53,29 @@ if [[ ! -x "$PYINSTALLER" ]]; then
   exit 1
 fi
 
-ARTIFACT_NAME="LeftoverAchievements-macOS-$MACOS_ARCH-$VERSION"
+APP_NAME="LeftoverAchievements"
+ARTIFACT_NAME="$APP_NAME-macOS-$MACOS_ARCH-$VERSION"
+DMG_NAME="$APP_NAME-macOS-$MACOS_ARCH"
 WORK_ROOT="$PROJECT_ROOT/build/pyinstaller-macos-$MACOS_ARCH"
 DIST_ROOT="$PROJECT_ROOT/dist"
 RELEASE_ROOT="$DIST_ROOT/releases"
 VERSION_DIR="$PROJECT_ROOT/build/packaging"
 VERSION_FILE="$VERSION_DIR/build-version.txt"
 ARCHITECTURE_FILE="$VERSION_DIR/build-architecture.txt"
+ICON_SOURCE="$PROJECT_ROOT/static/images/leftover-achievements-logo.png"
 
-rm -rf "$WORK_ROOT" "$DIST_ROOT/$ARTIFACT_NAME" "$DIST_ROOT/$ARTIFACT_NAME.app"
+rm -rf "$WORK_ROOT" "$DIST_ROOT/$APP_NAME" "$DIST_ROOT/$APP_NAME.app"
 mkdir -p "$VERSION_DIR" "$RELEASE_ROOT"
 printf '%s\n' "$VERSION" > "$VERSION_FILE"
 printf '%s\n' "$MACOS_ARCH" > "$ARCHITECTURE_FILE"
 
-export LEFTOVER_ARTIFACT_NAME="$ARTIFACT_NAME"
+export LEFTOVER_APP_NAME="$APP_NAME"
 export LEFTOVER_BUILD_VERSION_FILE="$VERSION_FILE"
 export LEFTOVER_BUILD_ARCHITECTURE_FILE="$ARCHITECTURE_FILE"
+export LEFTOVER_MACOS_ICON="$ICON_SOURCE"
 "$PYINSTALLER" --clean --noconfirm --workpath "$WORK_ROOT" --distpath "$DIST_ROOT" "$PROJECT_ROOT/packaging_specs/macos.spec"
 
-EXECUTABLE="$DIST_ROOT/$ARTIFACT_NAME.app/Contents/MacOS/$ARTIFACT_NAME"
+EXECUTABLE="$DIST_ROOT/$APP_NAME.app/Contents/MacOS/$APP_NAME"
 if [[ ! -x "$EXECUTABLE" ]]; then
   echo "Error: expected packaged executable is missing: $EXECUTABLE" >&2
   exit 1
@@ -86,8 +90,18 @@ if [[ "$ACTUAL_ARCH" != "$MACOS_ARCH" ]]; then
 fi
 
 ZIP_PATH="$RELEASE_ROOT/$ARTIFACT_NAME.zip"
-rm -f "$ZIP_PATH"
-ditto -c -k --sequesterRsrc --keepParent "$DIST_ROOT/$ARTIFACT_NAME.app" "$ZIP_PATH"
+DMG_PATH="$RELEASE_ROOT/$DMG_NAME.dmg"
+DMG_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/leftover-macos-dmg.XXXXXX")"
+trap 'rm -rf "$DMG_STAGING"' EXIT
+rm -f "$ZIP_PATH" "$DMG_PATH"
+ditto -c -k --sequesterRsrc --keepParent "$DIST_ROOT/$APP_NAME.app" "$ZIP_PATH"
 "$PYTHON" "$PROJECT_ROOT/scripts/validate_release_package.py" \
   --platform macos --architecture "$MACOS_ARCH" --version "$VERSION" "$ZIP_PATH"
-echo "Created $ZIP_PATH"
+
+ditto "$DIST_ROOT/$APP_NAME.app" "$DMG_STAGING/$APP_NAME.app"
+ln -s /Applications "$DMG_STAGING/Applications"
+/usr/bin/hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$DMG_STAGING" \
+  -ov -format UDZO "$DMG_PATH"
+
+echo "Created $ZIP_PATH (automatic updates)"
+echo "Created $DMG_PATH (user installation)"

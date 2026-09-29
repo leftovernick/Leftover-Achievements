@@ -6,6 +6,7 @@ venv/
 database/*.db
 .update.log
 .update-status
+instance-config.json
 build/
 dist/
 logs/

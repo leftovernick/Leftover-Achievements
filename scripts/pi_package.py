@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 VERSION_PATTERN = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+$")
 REQUIRED_PATHS = {
     "app.py",
+    "instance_config.py",
     "launcher.py",
     "runtime.py",
     "requirements.txt",

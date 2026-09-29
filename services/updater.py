@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import ssl
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -53,7 +55,12 @@ class ApplicationUpdater:
         self.repository = repository
         self.release_fetcher = release_fetcher or self._fetch_latest_release
         self.state_listener = state_listener
-        self.script_path = self.project_root / "scripts" / "update-app.sh"
+        script_name = (
+            "update-macos.sh"
+            if runtime_environment and runtime_environment.mode.value == "macos_packaged"
+            else "update-app.sh"
+        )
+        self.script_path = self.project_root / "scripts" / script_name
         self.log_path = (
             runtime_environment.update_log_path
             if runtime_environment
@@ -245,12 +252,19 @@ class ApplicationUpdater:
         if not self.runtime or self.runtime.supports_self_update:
             return None
         if self.runtime.is_packaged:
-            platform_name = "macOS" if self.runtime.mode.value == "macos_packaged" else "Windows"
             return (
-                f"Automatic installation is not yet supported for packaged {platform_name} builds. "
+                "Automatic installation is not yet supported for packaged Windows builds. "
                 "Download the matching release asset from GitHub to update manually."
             )
-        return "Automatic installation is only supported on Raspberry Pi deployments."
+        return "Automatic installation is only supported on macOS and Raspberry Pi deployments."
+
+    @staticmethod
+    def _macos_bundle_path() -> Path | None:
+        executable = Path(sys.executable).resolve()
+        for parent in executable.parents:
+            if parent.suffix.lower() == ".app":
+                return parent
+        return None
 
     def _release_asset(self, release: dict[str, Any], version: str) -> tuple[str | None, str | None]:
         if not self.runtime:
@@ -375,7 +389,10 @@ class ApplicationUpdater:
                     or "Automatic installation is not supported for this deployment."
                 )
 
-            if self.runtime and self.runtime.is_pi_appliance:
+            if self.runtime and (
+                self.runtime.is_pi_appliance
+                or self.runtime.mode.value == "macos_packaged"
+            ):
                 if not state["latest_release_asset_url"]:
                     raise UpdateError(
                         f"GitHub Release is missing {state['latest_release_asset_name']}."
@@ -387,16 +404,32 @@ class ApplicationUpdater:
             if not self.script_path.is_file():
                 raise UpdateError("The application update script is missing.")
 
+            command = [
+                "bash",
+                str(self.script_path),
+                str(self.project_root),
+                state["latest_release_tag"],
+                state["latest_release_asset_url"] or "",
+            ]
+            if self.runtime and self.runtime.mode.value == "macos_packaged":
+                bundle_path = self._macos_bundle_path()
+                if bundle_path is None:
+                    raise UpdateError("Could not locate the running macOS application bundle.")
+                command = [
+                    "bash",
+                    str(self.script_path),
+                    str(bundle_path),
+                    state["latest_release_tag"],
+                    state["latest_release_asset_url"] or "",
+                    self.runtime.architecture,
+                    str(os.getpid()),
+                    str(self.phase_path),
+                ]
+
             try:
                 log_file = self.log_path.open("a", encoding="utf-8")
                 self._install_process = subprocess.Popen(
-                    [
-                        "bash",
-                        str(self.script_path),
-                        str(self.project_root),
-                        state["latest_release_tag"],
-                        state["latest_release_asset_url"] or "",
-                    ],
+                    command,
                     cwd=self.project_root,
                     stdin=subprocess.DEVNULL,
                     stdout=log_file,

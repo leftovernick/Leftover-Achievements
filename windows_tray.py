@@ -12,7 +12,8 @@ import webbrowser
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from launcher import backend_urls, configure_logging, create_backend_server
+from launcher import backend_urls, configure_logging, create_backend_server, frontend_url
+from instance_config import instance_config
 from runtime import AlreadyRunningError, local_port_in_use, runtime
 
 
@@ -130,13 +131,16 @@ class WindowsTrayApplication:
         threading.Thread(target=check, name="leftover-update-tray", daemon=True).start()
 
     def _open_dashboard(self, _icon=None, _item=None):
-        webbrowser.open(self.local_url)
+        webbrowser.open(frontend_url())
+
+    def _open_connection_settings(self, _icon=None, _item=None):
+        webbrowser.open(f"{self.local_url}connection")
 
     def _open_display(self, _icon=None, _item=None):
         if not self.server_ready or self.shutting_down or self.window is None:
             return
         if not self.display_open:
-            self.window.load_url(f"http://127.0.0.1:{runtime.port}/display")
+            self.window.load_url(frontend_url("/display"))
             self.display_open = True
         self.window.show()
         self.window.restore()
@@ -154,7 +158,7 @@ class WindowsTrayApplication:
         self.window.load_url("about:blank")
 
     def _copy_address(self, _icon=None, _item=None):
-        address = self.lan_url or self.local_url
+        address = instance_config.hub_url or self.lan_url or self.local_url
         # Tk uses the native Windows clipboard and is available with Python.
         import tkinter
 
@@ -225,6 +229,7 @@ class WindowsTrayApplication:
             item("Open Dashboard", self._open_dashboard, default=True),
             item("Open Display Window", self._open_display, enabled=lambda _: self.server_ready and self.window is not None),
             item("Copy Dashboard Address", self._copy_address),
+            item("Connection Settings…", self._open_connection_settings),
             pystray.Menu.SEPARATOR,
             item(lambda _: self._notification_title(), None, enabled=False),
             pystray.Menu.SEPARATOR,

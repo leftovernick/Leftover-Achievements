@@ -8,6 +8,7 @@ from logging.handlers import RotatingFileHandler
 import uvicorn
 
 from runtime import AlreadyRunningError, detect_lan_ip, local_port_in_use, runtime
+from instance_config import instance_config
 
 
 GRACEFUL_SHUTDOWN_SECONDS = 8
@@ -52,6 +53,11 @@ def backend_urls() -> tuple[str, str | None]:
     lan_ip = detect_lan_ip()
     lan_url = f"http://{lan_ip}:{runtime.port}/" if lan_ip else None
     return local_url, lan_url
+
+
+def frontend_url(path: str = "/") -> str:
+    base = instance_config.hub_url or f"http://127.0.0.1:{runtime.port}"
+    return f"{base.rstrip('/')}/{path.lstrip('/')}"
 
 
 def create_backend_server() -> uvicorn.Server:

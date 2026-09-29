@@ -77,7 +77,7 @@ def validate_archive(
     if not archive.is_file() or archive.stat().st_size == 0:
         raise ValueError(f"Release archive is missing or empty: {archive}")
 
-    expected_root = f"{artifact_name}.app" if platform == "macos" else artifact_name
+    expected_root = "LeftoverAchievements.app" if platform == "macos" else artifact_name
     with zipfile.ZipFile(archive) as package:
         names = [PurePosixPath(info.filename) for info in package.infolist()]
         allowed_roots = {expected_root, "__MACOSX"} if platform == "macos" else {expected_root}
@@ -124,9 +124,17 @@ def validate_archive(
                     "Embedded architecture mismatch: "
                     f"expected {architecture!r}, got {embedded_architecture!r}"
                 )
+            update_helper = PurePosixPath(
+                expected_root, "Contents", "Resources", "scripts", "update-macos.sh"
+            )
+            if update_helper not in names:
+                raise ValueError("macOS archive does not contain the automatic update helper")
+            resource_root = PurePosixPath(expected_root, "Contents", "Resources")
+            if not any(name.parent == resource_root and name.suffix == ".icns" for name in names):
+                raise ValueError("macOS archive does not contain an application icon")
 
         if platform == "macos":
-            executable_suffix = f"Contents/MacOS/{artifact_name}"
+            executable_suffix = "Contents/MacOS/LeftoverAchievements"
         else:
             executable_suffix = f"{artifact_name}.exe"
         if not any(str(name).endswith(executable_suffix) for name in names):

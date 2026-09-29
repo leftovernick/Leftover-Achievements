@@ -31,9 +31,18 @@
           <div class="welcome-mark"><img src="/static/images/leftover-achievements-logo.png" alt="LeftoverAchievements" /></div>
           <p class="eyebrow">Welcome</p>
           <h1>Your achievements, together.</h1>
-          <p class="onboarding-lead">Track RetroAchievements players, compare rankings, follow recent activity, and power a display everyone can enjoy.</p>
+          <p class="onboarding-lead">Set up this device as its own instance, or use another LeftoverAchievements installation as its hub.</p>
           <form method="post" action="/onboarding/welcome" class="onboarding-actions">
-            <button type="submit">Get Started</button>
+            <button type="submit">Set Up This Device</button>
+          </form>
+          <div class="setup-divider"><span>or</span></div>
+          <form method="post" action="/onboarding/hub" class="onboarding-form hub-connect-form">
+            <label for="onboarding-hub-address">Connect to an existing hub</label>
+            <input id="onboarding-hub-address" name="hub_address" placeholder="192.168.1.50:8000" autocomplete="url" autocapitalize="none" spellcheck="false" required />
+            <p class="field-help">Enter the IP address or hostname of any Pi, Mac, or PC running LeftoverAchievements. This device's local database will remain separate.</p>
+            <div class="onboarding-actions">
+              <button type="submit" class="secondary-button">Test &amp; Connect</button>
+            </div>
           </form>
 
         {% elif step == 2 %}

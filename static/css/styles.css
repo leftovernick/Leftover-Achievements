@@ -2719,6 +2719,12 @@ input {
 .onboarding-form > label { display: block; margin-bottom: 8px; font-size: 0.86rem; font-weight: 750; }
 .onboarding-form input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); background: #171717; font: inherit; }
 .onboarding-form input:focus { border-color: var(--accent); outline: 2px solid var(--accent-soft); }
+.setup-divider { display: flex; align-items: center; gap: 12px; margin: 28px 0 4px; color: var(--muted-2); font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
+.setup-divider::before, .setup-divider::after { height: 1px; flex: 1; background: var(--border); content: ""; }
+.hub-connect-form .onboarding-actions { margin-top: 18px; }
+.connection-shell { padding-top: 54px; }
+.connection-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.connection-actions .action-link, .connection-actions button { display: inline-flex; min-height: 42px; align-items: center; padding: 9px 16px; }
 .field-help, .history-note { margin-top: 8px; color: var(--muted); font-size: 0.82rem; line-height: 1.5; }
 .field-help a { color: var(--accent-strong); }
 .connection-state { display: grid; grid-template-columns: auto 1fr; gap: 2px 9px; margin: 22px 0; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius); background: #181818; }

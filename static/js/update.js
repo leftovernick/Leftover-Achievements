@@ -29,7 +29,7 @@
     preparing: 'Preparing update…',
     installing: 'Installing dependencies…',
     applying: 'Applying system changes…',
-    restarting: 'Restarting service…',
+    restarting: 'Restarting app…',
   }[phase] || 'Updating…');
 
   const render = (state) => {
@@ -53,9 +53,10 @@
     releaseName.textContent = state.latest_release_name || state.latest_version || '';
     releaseNotes.hidden = !state.latest_release_notes;
     releaseNotes.textContent = state.latest_release_notes || '';
-    const releaseLinkUrl = state.latest_release_asset_url || state.latest_release_url;
+    const packagedDownload = state.latest_release_asset_url && !state.install_supported;
+    const releaseLinkUrl = packagedDownload ? state.latest_release_asset_url : state.latest_release_url;
     releaseLink.hidden = !releaseLinkUrl;
-    releaseLink.textContent = state.latest_release_asset_url ? 'Download packaged release' : 'View release on GitHub';
+    releaseLink.textContent = packagedDownload ? 'Download packaged release' : 'View release on GitHub';
     if (releaseLinkUrl) releaseLink.href = releaseLinkUrl;
     else releaseLink.removeAttribute('href');
 
@@ -85,7 +86,7 @@
     } catch (requestError) {
       summary.textContent = updateRunning ? 'Reconnecting…' : 'Unable to check';
       error.hidden = false;
-      error.textContent = updateRunning ? 'The service is restarting. Reconnecting…' : requestError.message;
+      error.textContent = updateRunning ? 'The app is restarting. Reconnecting…' : requestError.message;
     }
     window.setTimeout(poll, updateRunning ? 2000 : 60000);
   };

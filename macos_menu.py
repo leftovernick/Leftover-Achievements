@@ -37,7 +37,8 @@ from AppKit import (
 from Foundation import NSObject, NSTimer, NSURL, NSURLRequest
 from WebKit import WKAudiovisualMediaTypeNone, WKWebView, WKWebViewConfiguration
 
-from launcher import backend_urls, configure_logging, create_backend_server
+from launcher import backend_urls, configure_logging, create_backend_server, frontend_url
+from instance_config import instance_config
 from runtime import AlreadyRunningError, local_port_in_use, runtime
 
 
@@ -59,6 +60,7 @@ class MenuBarDelegate(NSObject):
         self.update_status_item = None
         self.notification_status_item = None
         self.view_update_item = None
+        self.install_update_item = None
         self.open_display_item = None
         self.display_window = None
         self.display_web_view = None
@@ -121,6 +123,7 @@ class MenuBarDelegate(NSObject):
         self.open_display_item.setEnabled_(False)
         menu.addItem_(self.open_display_item)
         menu.addItem_(self._menu_item("Copy Dashboard Address", "copyDashboardAddress:"))
+        menu.addItem_(self._menu_item("Connection Settings…", "openConnectionSettings:"))
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.notification_status_item = self._menu_item("Notifications: Checking…", None)
@@ -128,6 +131,9 @@ class MenuBarDelegate(NSObject):
         menu.addItem_(self.notification_status_item)
         menu.addItem_(NSMenuItem.separatorItem())
         menu.addItem_(self._menu_item("Check for Updates", "checkForUpdates:"))
+        self.install_update_item = self._menu_item("Install Update…", "installUpdate:")
+        self.install_update_item.setHidden_(True)
+        menu.addItem_(self.install_update_item)
 
         self.update_status_item = self._menu_item("Update status: Checking…", None)
         self.update_status_item.setEnabled_(False)
@@ -285,20 +291,27 @@ class MenuBarDelegate(NSObject):
             self.update_url = None
         elif payload.get("update_available") and latest:
             title = f"Update available • {latest}"
-            self.update_url = payload.get("latest_release_asset_url") or payload.get(
-                "latest_release_url"
-            )
+            self.update_url = payload.get("latest_release_url")
         else:
             title = f"Up to date • {installed}"
             self.update_url = None
         self.update_status_item.setTitle_(title)
         self.view_update_item.setHidden_(not bool(self.update_url))
+        can_install = bool(
+            payload.get("update_available")
+            and payload.get("install_supported")
+            and not payload.get("installing")
+        )
+        self.install_update_item.setHidden_(not can_install)
 
     def _open_url(self, url: str):
         NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
 
     def openDashboard_(self, _sender):
-        self._open_url(self.local_url)
+        self._open_url(frontend_url())
+
+    def openConnectionSettings_(self, _sender):
+        self._open_url(f"{self.local_url}connection")
 
     def openDisplay_(self, _sender):
         if self.server is None or not self.server.started or self.shutting_down:
@@ -330,7 +343,7 @@ class MenuBarDelegate(NSObject):
             self.display_web_view = web_view
             web_view.loadRequest_(
                 NSURLRequest.requestWithURL_(
-                    NSURL.URLWithString_(f"http://127.0.0.1:{runtime.port}/display")
+                    NSURL.URLWithString_(frontend_url("/display"))
                 )
             )
         self.display_window.makeKeyAndOrderFront_(None)
@@ -345,7 +358,7 @@ class MenuBarDelegate(NSObject):
         self.display_window = None
 
     def copyDashboardAddress_(self, _sender):
-        address = self.lan_url or self.local_url
+        address = instance_config.hub_url or self.lan_url or self.local_url
         pasteboard = NSPasteboard.generalPasteboard()
         pasteboard.clearContents()
         pasteboard.setString_forType_(address, NSPasteboardTypeString)
@@ -356,6 +369,34 @@ class MenuBarDelegate(NSObject):
             self._request_update_state(check_now=True)
         else:
             self.update_status_item.setTitle_("Unable to check for updates")
+
+    def installUpdate_(self, _sender):
+        if self.update_request_running or self.shutting_down:
+            return
+        self.update_request_running = True
+        self.update_status_item.setTitle_("Installing update…")
+        self.install_update_item.setHidden_(True)
+        threading.Thread(
+            target=self._install_update,
+            name="leftover-update-install",
+            daemon=True,
+        ).start()
+
+    def _install_update(self):
+        request = Request(
+            f"http://127.0.0.1:{runtime.port}/api/update/install",
+            method="POST",
+            data=b"",
+        )
+        try:
+            with urlopen(request, timeout=15) as response:
+                payload = json.load(response)
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+            payload = {"error": str(exc)}
+            self.logger.warning("Menu update installation request failed: %s", exc)
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applyUpdateState:", payload, False
+        )
 
     def viewUpdate_(self, _sender):
         if self.update_url:

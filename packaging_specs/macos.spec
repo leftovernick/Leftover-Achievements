@@ -6,9 +6,10 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 project_root = Path(SPECPATH).parent
-artifact_name = os.environ["LEFTOVER_ARTIFACT_NAME"]
+app_name = os.environ["LEFTOVER_APP_NAME"]
 version_file = os.environ["LEFTOVER_BUILD_VERSION_FILE"]
 architecture_file = os.environ["LEFTOVER_BUILD_ARCHITECTURE_FILE"]
+icon_file = os.environ["LEFTOVER_MACOS_ICON"]
 
 a = Analysis(
     [str(project_root / "macos_menu.py")],
@@ -17,6 +18,7 @@ a = Analysis(
     datas=[
         (str(project_root / "templates"), "templates"),
         (str(project_root / "static"), "static"),
+        (str(project_root / "scripts" / "update-macos.sh"), "scripts"),
         (version_file, "."),
         (architecture_file, "."),
     ],
@@ -34,7 +36,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name=artifact_name,
+    name=app_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -47,11 +49,12 @@ collection = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name=artifact_name,
+    name=app_name,
 )
 app = BUNDLE(
     collection,
-    name=f"{artifact_name}.app",
+    name=f"{app_name}.app",
+    icon=icon_file,
     bundle_identifier="com.leftoverachievements.server",
     info_plist={
         "CFBundleName": "LeftoverAchievements",

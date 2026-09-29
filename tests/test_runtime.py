@@ -90,12 +90,12 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         self.assertEqual(normalize_architecture("AMD64"), "x64")
         self.assertEqual(normalize_architecture("aarch64"), "arm64")
 
-    def test_only_pi_mode_supports_self_update_and_kiosk(self):
+    def test_pi_and_macos_support_self_update_but_only_pi_uses_kiosk(self):
         pi = self.environment(RuntimeMode.RASPBERRY_PI)
         mac = self.environment(RuntimeMode.MACOS_PACKAGED)
         self.assertTrue(pi.supports_self_update)
         self.assertTrue(pi.should_launch_kiosk)
-        self.assertFalse(mac.supports_self_update)
+        self.assertTrue(mac.supports_self_update)
         self.assertFalse(mac.should_launch_kiosk)
 
     def test_single_instance_lock_rejects_second_owner(self):

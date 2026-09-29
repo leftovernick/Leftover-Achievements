@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeftoverAchievements Connection</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=hub-connections-1" />
+  </head>
+  <body class="web-dashboard onboarding-page">
+    <header class="onboarding-header">
+      <a href="/connection" class="brand"><img src="/static/images/leftover-achievements-logo.png" alt="" aria-hidden="true" /><span>LeftoverAchievements</span></a>
+      <span>Connection settings</span>
+    </header>
+
+    <main class="onboarding-shell connection-shell">
+      {% if message %}
+        <div class="message onboarding-message {% if message_status == 'error' %}error-message{% elif message_status == 'success' %}success-message{% endif %}" role="status">{{ message }}</div>
+      {% endif %}
+
+      <section class="panel onboarding-card">
+        <p class="eyebrow">Device role</p>
+        {% if hub_url %}
+          <h1>Connected to a hub</h1>
+          <p class="onboarding-lead">This app is using the hub's dashboard and data. Its own local database is preserved but inactive.</p>
+          <div class="connection-state is-connected">
+            <span class="status-dot"></span>
+            <strong>{{ hub_url }}</strong>
+            <small>Dashboard, settings, history, and API polling are provided by this hub.</small>
+          </div>
+          <div class="connection-actions">
+            <a href="{{ hub_url }}" class="action-link">Open Hub</a>
+            <form method="post" action="/connection/disconnect">
+              <button type="submit" class="secondary-button">Disconnect From Hub</button>
+            </form>
+          </div>
+          <div class="setup-divider"><span>change hub</span></div>
+        {% else %}
+          <h1>This device is independent</h1>
+          <p class="onboarding-lead">It uses its own database and can serve as a hub for other devices.{% if not local_setup_complete %} Local setup has not been completed yet.{% endif %}</p>
+          {% if local_setup_complete %}
+            <div class="connection-actions"><a href="/" class="action-link">Open Local Dashboard</a></div>
+          {% else %}
+            <div class="connection-actions"><a href="/onboarding" class="action-link">Set Up This Device</a></div>
+          {% endif %}
+          <div class="setup-divider"><span>connect to a hub</span></div>
+        {% endif %}
+
+        <form method="post" action="/connection/connect" class="onboarding-form hub-connect-form">
+          <label for="hub-address">Hub IP address or hostname</label>
+          <input id="hub-address" name="hub_address" placeholder="192.168.1.50:8000" autocomplete="url" autocapitalize="none" spellcheck="false" required />
+          <p class="field-help">The hub can be a Pi, Mac, PC, or any other device running LeftoverAchievements.</p>
+          <div class="onboarding-actions">
+            <button type="submit">{% if hub_url %}Switch Hub{% else %}Test &amp; Connect{% endif %}</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

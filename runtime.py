@@ -108,7 +108,7 @@ class RuntimeEnvironment:
 
     @property
     def supports_self_update(self) -> bool:
-        return self.is_pi_appliance
+        return self.is_pi_appliance or self.mode is RuntimeMode.MACOS_PACKAGED
 
     @property
     def database_path(self) -> Path:

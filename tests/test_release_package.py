@@ -30,9 +30,9 @@ class ReleasePackageValidationTests(unittest.TestCase):
     ) -> Path:
         artifact = expected_artifact_name(platform, version, architecture)
         archive = self.root / f"{artifact}.zip"
-        package_root = f"{artifact}.app" if platform == "macos" else artifact
+        package_root = "LeftoverAchievements.app" if platform == "macos" else artifact
         executable = (
-            f"{package_root}/Contents/MacOS/{artifact}"
+            f"{package_root}/Contents/MacOS/LeftoverAchievements"
             if platform == "macos"
             else f"{package_root}/{artifact}.exe"
         )
@@ -48,6 +48,14 @@ class ReleasePackageValidationTests(unittest.TestCase):
                 package.writestr(
                     f"{package_root}/Contents/Resources/build-architecture.txt",
                     embedded_architecture or architecture or "",
+                )
+                package.writestr(
+                    f"{package_root}/Contents/Resources/scripts/update-macos.sh",
+                    "#!/bin/bash\n",
+                )
+                package.writestr(
+                    f"{package_root}/Contents/Resources/LeftoverAchievements.icns",
+                    b"icon",
                 )
             if extra_file:
                 package.writestr(f"{package_root}/{extra_file}", b"private")
