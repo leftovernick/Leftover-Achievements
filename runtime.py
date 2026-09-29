@@ -14,6 +14,7 @@ from typing import BinaryIO
 
 APP_NAME = "LeftoverAchievements"
 DEFAULT_PORT = 8000
+DEVELOPMENT_PORT = 8001
 GITHUB_REPOSITORY = "leftovernick/Leftover-Achievements"
 
 
@@ -148,7 +149,7 @@ class RuntimeEnvironment:
         if self.mode is RuntimeMode.MACOS_PACKAGED:
             if self.architecture not in {"arm64", "x64"}:
                 return None
-            return f"{APP_NAME}-macOS-{self.architecture}-{version}.zip"
+            return f"{APP_NAME}-macOS-{self.architecture}.dmg"
         if self.mode is RuntimeMode.WINDOWS_PACKAGED:
             return f"{APP_NAME}-Windows-x64-{version}.zip"
         if self.mode is RuntimeMode.RASPBERRY_PI:
@@ -247,6 +248,10 @@ def _runtime_architecture(resource_root: Path, mode: RuntimeMode) -> str:
     return normalize_architecture(platform.machine())
 
 
+def _default_port(mode: RuntimeMode) -> int:
+    return DEVELOPMENT_PORT if mode is RuntimeMode.DEVELOPMENT else DEFAULT_PORT
+
+
 def detect_lan_ip() -> str | None:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -274,8 +279,9 @@ def detect_runtime() -> RuntimeEnvironment:
         RuntimeMode.MACOS_PACKAGED,
         RuntimeMode.WINDOWS_PACKAGED,
     } else resources / "static" / "audio"
+    default_port = _default_port(mode)
     try:
-        port = int(os.getenv("LEFTOVER_PORT", str(DEFAULT_PORT)))
+        port = int(os.getenv("LEFTOVER_PORT", str(default_port)))
     except ValueError as exc:
         raise RuntimeError("LEFTOVER_PORT must be an integer.") from exc
     if not 1 <= port <= 65535:

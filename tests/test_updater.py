@@ -107,12 +107,12 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             payload = release("v1.2.0")
             payload["assets"] = [
                 {
-                    "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
-                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/package.zip",
+                    "name": "LeftoverAchievements-macOS-arm64.dmg",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/package.dmg",
                 },
                 {
-                    "name": "LeftoverAchievements-macOS-x64-v1.2.0.zip",
-                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/x64.zip",
+                    "name": "LeftoverAchievements-macOS-x64.dmg",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/x64.dmg",
                 },
             ]
             return payload
@@ -129,9 +129,9 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["installed_version"], "v1.1.0")
         self.assertEqual(
             state["latest_release_asset_name"],
-            "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
+            "LeftoverAchievements-macOS-arm64.dmg",
         )
-        self.assertTrue(state["latest_release_asset_url"].endswith("/package.zip"))
+        self.assertTrue(state["latest_release_asset_url"].endswith("/package.dmg"))
         self.assertEqual(state["runtime_architecture"], "arm64")
 
     async def test_packaged_macos_install_launches_bundle_replacement_helper(self):
@@ -153,8 +153,8 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         async def fetch_release(_repository: str):
             payload = release("v1.2.0")
             payload["assets"] = [{
-                "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
-                "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/update.zip",
+                "name": "LeftoverAchievements-macOS-arm64.dmg",
+                "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/update.dmg",
             }]
             return payload
 
@@ -179,7 +179,7 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command[2], str(bundle))
         self.assertEqual(command[3:7], [
             "v1.2.0",
-            "https://github.com/example/project/releases/download/v1.2.0/update.zip",
+            "https://github.com/example/project/releases/download/v1.2.0/update.dmg",
             "arm64",
             "4321",
         ])
@@ -201,12 +201,12 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             payload = release("v1.2.0")
             payload["assets"] = [
                 {
-                    "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
-                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/arm64.zip",
+                    "name": "LeftoverAchievements-macOS-arm64.dmg",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/arm64.dmg",
                 },
                 {
-                    "name": "LeftoverAchievements-macOS-x64-v1.2.0.zip",
-                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/x64.zip",
+                    "name": "LeftoverAchievements-macOS-x64.dmg",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/x64.dmg",
                 },
             ]
             return payload
@@ -220,9 +220,9 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
         state = await updater.check()
         self.assertEqual(
             state["latest_release_asset_name"],
-            "LeftoverAchievements-macOS-x64-v1.2.0.zip",
+            "LeftoverAchievements-macOS-x64.dmg",
         )
-        self.assertTrue(state["latest_release_asset_url"].endswith("/x64.zip"))
+        self.assertTrue(state["latest_release_asset_url"].endswith("/x64.dmg"))
 
     async def test_packaged_pi_discovers_only_arm64_tarball(self):
         data = self.root / "data"
@@ -240,8 +240,8 @@ class ReleaseUpdateTests(unittest.IsolatedAsyncioTestCase):
             payload = release("v1.2.0")
             payload["assets"] = [
                 {
-                    "name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
-                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/mac.zip",
+                    "name": "LeftoverAchievements-macOS-arm64.dmg",
+                    "browser_download_url": "https://github.com/example/project/releases/download/v1.2.0/mac.dmg",
                 },
                 {
                     "name": "LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz",

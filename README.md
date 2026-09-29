@@ -28,21 +28,21 @@ pip install -r requirements.txt
 3. Run the FastAPI app:
 
 ```bash
-uvicorn app:app --reload --timeout-graceful-shutdown 1
+.venv/bin/uvicorn app:app --reload --port 8001 --timeout-graceful-shutdown 1
 ```
 
-4. Open http://127.0.0.1:8000/ in your browser. A new installation opens the guided
+4. Open http://127.0.0.1:8001/ in your browser. A new installation opens the guided
 setup automatically. The guide verifies a RetroAchievements Web API key, adds the
 first tracked players, and confirms that the display is ready without requiring file
 edits.
 
 After setup, the main pages are:
 
-- Dashboard: http://127.0.0.1:8000/
-- Admin: http://127.0.0.1:8000/admin
-- Display: http://127.0.0.1:8000/display
-- History: http://127.0.0.1:8000/history
-- Charts: http://127.0.0.1:8000/charts
+- Dashboard: http://127.0.0.1:8001/
+- Admin: http://127.0.0.1:8001/admin
+- Display: http://127.0.0.1:8001/display
+- History: http://127.0.0.1:8001/history
+- Charts: http://127.0.0.1:8001/charts
 
 ## Hubs and client devices
 
@@ -143,7 +143,7 @@ on a free port:
 
 ```bash
 LEFTOVER_RUNTIME_MODE=macos_packaged \
-LEFTOVER_PORT=8000 \
+LEFTOVER_PORT=8001 \
 python macos_menu.py
 ```
 
@@ -192,10 +192,10 @@ On an Apple Silicon Mac, build the native arm64 package:
 MACOS_ARCH=arm64 ./scripts/build-macos.sh
 ```
 
-This produces a user installer at
-`dist/releases/LeftoverAchievements-macOS-arm64.dmg` and an automatic-update package
-at `dist/releases/LeftoverAchievements-macOS-arm64-v1.2.0.zip`. Open the DMG and drag
-the stable, custom-icon `LeftoverAchievements.app` onto its Applications shortcut.
+This produces `dist/releases/LeftoverAchievements-macOS-arm64.dmg`. Open the DMG and
+drag the stable, custom-icon `LeftoverAchievements.app` onto its Applications shortcut.
+The same DMG is used for automatic updates, so users see only one Mac download for
+each processor architecture.
 The app runs without a main window or Dock icon. It is not Developer ID signed or
 notarized, so downloaded builds may require **Control-click → Open** in Finder or
 approval in **System Settings → Privacy & Security**. Signing and notarization are
@@ -207,9 +207,8 @@ On an Intel Mac, build the native x64 package instead:
 MACOS_ARCH=x64 ./scripts/build-macos.sh
 ```
 
-This produces `dist/releases/LeftoverAchievements-macOS-x64.dmg` plus the versioned
-ZIP used by automatic updates. The build script refuses to cross-compile: `arm64`
-must run on Apple Silicon and `x64` must run on Intel.
+This produces `dist/releases/LeftoverAchievements-macOS-x64.dmg`. The build script
+refuses to cross-compile: `arm64` must run on Apple Silicon and `x64` must run on Intel.
 
 Choose the macOS download that matches the computer:
 
@@ -240,8 +239,8 @@ Silicon macOS on `macos-15`, Intel macOS on `macos-15-intel`, and Windows x64 on
 exact tag, validates its archive, and attaches one predictably named
 asset to the same Release:
 
-- `LeftoverAchievements-macOS-arm64.dmg` and its versioned update ZIP
-- `LeftoverAchievements-macOS-x64.dmg` and its versioned update ZIP
+- `LeftoverAchievements-macOS-arm64.dmg`
+- `LeftoverAchievements-macOS-x64.dmg`
 - `LeftoverAchievements-Windows-x64-v1.2.0.zip`
 - `LeftoverAchievements-Pi-arm64-v1.2.0.tar.gz`
 
@@ -535,8 +534,8 @@ When a build is ready for users:
 Publishing the Release is the explicit **ship this version** action. Ordinary commits
 and pushes never create device updates or desktop packages. After publication, a Pi
 detects the tag during its next check and waits for the user to install it from Quick
-Settings or web Settings. Packaged macOS installations detect the matching attached
-ZIP and can replace themselves from Settings. Windows installations still direct the
+Settings or web Settings. Packaged macOS installations use the matching attached DMG
+and can replace themselves from Settings. Windows installations still direct the
 user to download their matching ZIP manually. No command-line Git is needed to publish
 releases. Packaged app and Pi paths are stable and do not need editing when releases
 change.

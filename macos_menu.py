@@ -79,7 +79,7 @@ class MenuBarDelegate(NSObject):
         if local_port_in_use(runtime.port):
             self.backend_error = f"Port {runtime.port} is already in use."
             self.logger.error("Backend startup failed: %s", self.backend_error)
-            self._set_server_status("Server: Failed")
+            self._set_server_status(f"Server: Port {runtime.port} In Use")
         else:
             self._start_backend()
 

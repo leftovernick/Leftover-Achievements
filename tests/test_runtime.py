@@ -5,8 +5,10 @@ from pathlib import Path
 
 from runtime import (
     AlreadyRunningError,
+    DEVELOPMENT_PORT,
     RuntimeEnvironment,
     RuntimeMode,
+    _default_port,
     _runtime_architecture,
     local_port_in_use,
     normalize_architecture,
@@ -51,11 +53,11 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         pi = self.environment(RuntimeMode.RASPBERRY_PI, version="v1.2.0")
         self.assertEqual(
             mac_arm64.release_asset_name("v1.2.0"),
-            "LeftoverAchievements-macOS-arm64-v1.2.0.zip",
+            "LeftoverAchievements-macOS-arm64.dmg",
         )
         self.assertEqual(
             mac_x64.release_asset_name("v1.2.0"),
-            "LeftoverAchievements-macOS-x64-v1.2.0.zip",
+            "LeftoverAchievements-macOS-x64.dmg",
         )
         self.assertEqual(
             windows.release_asset_name("v1.2.0"),
@@ -115,6 +117,13 @@ class RuntimeEnvironmentTests(unittest.TestCase):
         connection.__enter__.return_value = connection
         with patch("runtime.socket.create_connection", return_value=connection):
             self.assertTrue(local_port_in_use(8000))
+
+    def test_development_port_does_not_conflict_with_packaged_apps(self):
+        self.assertEqual(DEVELOPMENT_PORT, 8001)
+        self.assertEqual(_default_port(RuntimeMode.DEVELOPMENT), 8001)
+        self.assertEqual(_default_port(RuntimeMode.MACOS_PACKAGED), 8000)
+        self.assertEqual(_default_port(RuntimeMode.WINDOWS_PACKAGED), 8000)
+        self.assertEqual(_default_port(RuntimeMode.RASPBERRY_PI), 8000)
 
 
 if __name__ == "__main__":

@@ -175,16 +175,14 @@ jobs:
           test -s "$RUNNER_TEMP/update-status.json"
           python -c 'import json, os; from pathlib import Path; payload=json.loads(Path(os.environ["RUNNER_TEMP"], "update-status.json").read_text()); assert payload["installed_version"] == os.environ["RELEASE_TAG"], payload; assert payload["runtime_architecture"] == os.environ["MACOS_ARCH"], payload'
 
-      - name: Attach macOS installer and update package to this release
+      - name: Attach macOS installer to this release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          update_asset="dist/releases/LeftoverAchievements-macOS-$MACOS_ARCH-$RELEASE_TAG.zip"
           installer_asset="dist/releases/LeftoverAchievements-macOS-$MACOS_ARCH.dmg"
-          test -s "$update_asset"
           test -s "$installer_asset"
-          gh release upload "$RELEASE_TAG" "$update_asset" "$installer_asset" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" "$installer_asset" --clobber --repo "$GITHUB_REPOSITORY"
 
   macos-x64:
     name: macOS x64 package
@@ -272,16 +270,14 @@ jobs:
           test -s "$RUNNER_TEMP/update-status.json"
           python -c 'import json, os; from pathlib import Path; payload=json.loads(Path(os.environ["RUNNER_TEMP"], "update-status.json").read_text()); assert payload["installed_version"] == os.environ["RELEASE_TAG"], payload; assert payload["runtime_architecture"] == os.environ["MACOS_ARCH"], payload'
 
-      - name: Attach macOS installer and update package to this release
+      - name: Attach macOS installer to this release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          update_asset="dist/releases/LeftoverAchievements-macOS-$MACOS_ARCH-$RELEASE_TAG.zip"
           installer_asset="dist/releases/LeftoverAchievements-macOS-$MACOS_ARCH.dmg"
-          test -s "$update_asset"
           test -s "$installer_asset"
-          gh release upload "$RELEASE_TAG" "$update_asset" "$installer_asset" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" "$installer_asset" --clobber --repo "$GITHUB_REPOSITORY"
 
   windows-x64:
     name: Windows x64 package

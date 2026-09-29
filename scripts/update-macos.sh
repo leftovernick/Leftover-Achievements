@@ -32,28 +32,33 @@ BACKUP_APP="$INSTALL_DIR/.LeftoverAchievements.update-backup.app"
 [[ -w "$INSTALL_DIR" ]] || fail_update "$(dirname "$CURRENT_APP") is not writable. Move LeftoverAchievements to Applications and try again."
 
 UPDATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/leftover-macos-update.XXXXXX")"
-ARCHIVE="$UPDATE_ROOT/update.zip"
-STAGING="$UPDATE_ROOT/staging"
-trap 'rm -rf "$UPDATE_ROOT"' EXIT
-mkdir -p "$STAGING"
+DISK_IMAGE="$UPDATE_ROOT/update.dmg"
+MOUNT_POINT="$UPDATE_ROOT/mount"
+NEW_APP="$UPDATE_ROOT/$APP_NAME"
+MOUNTED=0
+cleanup() {
+  if [[ "$MOUNTED" == 1 ]]; then
+    /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+  fi
+  rm -rf "$UPDATE_ROOT"
+}
+trap cleanup EXIT
+mkdir -p "$MOUNT_POINT"
 
 set_phase downloading
-/usr/bin/curl --fail --location --silent --show-error "$ASSET_URL" --output "$ARCHIVE" \
+/usr/bin/curl --fail --location --silent --show-error "$ASSET_URL" --output "$DISK_IMAGE" \
   || fail_update "the release could not be downloaded."
 
 set_phase validating
-while IFS= read -r member; do
-  case "$member" in
-    LeftoverAchievements.app/*|__MACOSX/*) ;;
-    *) fail_update "the release archive contains an unexpected path: $member" ;;
-  esac
-  case "/$member/" in
-    */../*|*/.git/*|*/.env/*|*/leftover.db/*) fail_update "the release archive contains an unsafe path." ;;
-  esac
-done < <(/usr/bin/zipinfo -1 "$ARCHIVE")
+/usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DISK_IMAGE" >/dev/null \
+  || fail_update "the release disk image could not be opened."
+MOUNTED=1
+MOUNTED_APP="$MOUNT_POINT/$APP_NAME"
+[[ -d "$MOUNTED_APP" ]] || fail_update "the release does not contain LeftoverAchievements.app."
+/usr/bin/ditto "$MOUNTED_APP" "$NEW_APP" || fail_update "the application could not be copied from the release."
+/usr/bin/hdiutil detach "$MOUNT_POINT" -quiet || fail_update "the release disk image could not be closed."
+MOUNTED=0
 
-/usr/bin/ditto -x -k "$ARCHIVE" "$STAGING" || fail_update "the release could not be extracted."
-NEW_APP="$STAGING/$APP_NAME"
 NEW_EXECUTABLE="$NEW_APP/Contents/MacOS/LeftoverAchievements"
 [[ -x "$NEW_EXECUTABLE" ]] || fail_update "the release does not contain LeftoverAchievements.app."
 

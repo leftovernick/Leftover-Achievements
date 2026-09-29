@@ -51,7 +51,7 @@ class RaspberryPiPackageTests(unittest.TestCase):
             "draft": False,
             "prerelease": False,
             "assets": [
-                {"name": "LeftoverAchievements-macOS-arm64-v1.2.0.zip", "browser_download_url": "https://github.com/example/mac"},
+                {"name": "LeftoverAchievements-macOS-arm64.dmg", "browser_download_url": "https://github.com/example/mac"},
                 {"name": expected, "browser_download_url": "https://github.com/example/pi"},
             ],
         })

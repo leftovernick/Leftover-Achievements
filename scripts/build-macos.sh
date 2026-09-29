@@ -54,7 +54,6 @@ if [[ ! -x "$PYINSTALLER" ]]; then
 fi
 
 APP_NAME="LeftoverAchievements"
-ARTIFACT_NAME="$APP_NAME-macOS-$MACOS_ARCH-$VERSION"
 DMG_NAME="$APP_NAME-macOS-$MACOS_ARCH"
 WORK_ROOT="$PROJECT_ROOT/build/pyinstaller-macos-$MACOS_ARCH"
 DIST_ROOT="$PROJECT_ROOT/dist"
@@ -89,19 +88,25 @@ if [[ "$ACTUAL_ARCH" != "$MACOS_ARCH" ]]; then
   exit 1
 fi
 
-ZIP_PATH="$RELEASE_ROOT/$ARTIFACT_NAME.zip"
 DMG_PATH="$RELEASE_ROOT/$DMG_NAME.dmg"
 DMG_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/leftover-macos-dmg.XXXXXX")"
 trap 'rm -rf "$DMG_STAGING"' EXIT
-rm -f "$ZIP_PATH" "$DMG_PATH"
-ditto -c -k --sequesterRsrc --keepParent "$DIST_ROOT/$APP_NAME.app" "$ZIP_PATH"
-"$PYTHON" "$PROJECT_ROOT/scripts/validate_release_package.py" \
-  --platform macos --architecture "$MACOS_ARCH" --version "$VERSION" "$ZIP_PATH"
+rm -f "$DMG_PATH"
+
+APP_RESOURCES="$DIST_ROOT/$APP_NAME.app/Contents/Resources"
+[[ -f "$APP_RESOURCES/scripts/update-macos.sh" ]] || {
+  echo "Error: macOS update helper is missing from the app bundle." >&2
+  exit 1
+}
+ICON_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$DIST_ROOT/$APP_NAME.app/Contents/Info.plist")"
+[[ -n "$ICON_NAME" && -f "$APP_RESOURCES/$ICON_NAME" ]] || {
+  echo "Error: macOS application icon is missing from the app bundle." >&2
+  exit 1
+}
 
 ditto "$DIST_ROOT/$APP_NAME.app" "$DMG_STAGING/$APP_NAME.app"
 ln -s /Applications "$DMG_STAGING/Applications"
 /usr/bin/hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$DMG_STAGING" \
   -ov -format UDZO "$DMG_PATH"
 
-echo "Created $ZIP_PATH (automatic updates)"
-echo "Created $DMG_PATH (user installation)"
+echo "Created $DMG_PATH (installation and automatic updates)"
