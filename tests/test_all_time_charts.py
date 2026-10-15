@@ -405,8 +405,25 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         db.save_user_game_library("Player", games)
         cached = db.get_user_game_libraries(["player"])["player"]
         self.assertEqual(cached["games"], games)
-        db.save_game_metadata({"game_id": 9, "game_title": "Library Game", "console": "NES", "genre": "Action"})
+        db.save_game_metadata({
+            "game_id": 9, "game_title": "Library Game", "console": "NES", "genre": "Action",
+            "image_box_art": "https://example.test/library-cover.png",
+        })
         self.assertEqual(db.get_game_metadata({9})[9]["genre"], "Action")
+        self.assertEqual(
+            db.get_game_metadata({9})[9]["image_box_art"],
+            "https://example.test/library-cover.png",
+        )
+        self.assertIsNotNone(db.get_game_metadata({9})[9]["image_box_art_checked_at"])
+
+    def test_missing_box_art_is_recorded_as_checked(self):
+        db.save_game_metadata({
+            "game_id": 10, "game_title": "No Cover Game", "console": "NES",
+            "genre": "Action", "image_box_art": None,
+        })
+        metadata = db.get_game_metadata({10})[10]
+        self.assertIsNone(metadata["image_box_art"])
+        self.assertIsNotNone(metadata["image_box_art_checked_at"])
 
     def test_ui_toggle_is_local_and_shared_axis_starts_at_zero(self):
         root = Path(__file__).resolve().parents[1]

@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import aiohttp
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -34,6 +34,8 @@ from services.macos_notifications import MacOSNotificationService
 from services.windows_notifications import WindowsNotificationService
 from services.retroachievements import RetroAchievements
 from services.updater import ApplicationUpdater, UpdateError
+from services.wrapped import WrappedService
+from services.wrapped_story import WrappedStorySelector
 
 
 app = FastAPI(title="LeftoverAchievements Display")
@@ -48,6 +50,7 @@ def remote_page_url(request: Request) -> str | None:
     is_frontend_page = (
         path in {"/", "/display", "/history", "/charts", "/users", "/admin"}
         or path.startswith("/users/")
+        or path.startswith("/history/wrapped/")
     )
     if not is_frontend_page:
         return None
@@ -119,6 +122,7 @@ CURRENTLY_PLAYING_STALE_MAX = timedelta(minutes=10)
 profile_detail_retry_at: dict[tuple[str, str], datetime] = {}
 weekly_refresh_task = None
 game_library_refresh_task = None
+game_metadata_refresh_task = None
 history_backfill_task = None
 history_refresh_live_requested = False
 history_backfill_status = {
@@ -893,12 +897,7 @@ async def refresh_weekly_rankings(users: list[dict], week_start: datetime, week_
     if rankings:
         db.save_weekly_rankings(rankings, week_start.isoformat())
         game_ids = {game["game_id"] for ranking in rankings for game in ranking["played_games"]}
-        cached_metadata = db.get_game_metadata(game_ids)
-        for game_id in sorted(game_ids - set(cached_metadata)):
-            try:
-                db.save_game_metadata(await ra_client.game_summary(game_id))
-            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-                logger.warning("Could not load metadata for game %s: %s: %s", game_id, type(exc).__name__, exc)
+        await refresh_game_metadata(game_ids)
 
 
 async def refresh_weekly_ranking_for_user(username: str, week_start: datetime, week_end: datetime) -> bool:
@@ -921,7 +920,9 @@ async def refresh_weekly_ranking_for_user(username: str, week_start: datetime, w
 
 def schedule_game_library_refresh_if_needed(users: list[dict], libraries: dict):
     global game_library_refresh_task
-    if not users or (game_library_refresh_task and not game_library_refresh_task.done()):
+    if not users:
+        return
+    if game_library_refresh_task and not game_library_refresh_task.done():
         return
     pending = []
     for user in users:
@@ -938,6 +939,12 @@ def schedule_game_library_refresh_if_needed(users: list[dict], libraries: dict):
             pending.append(user)
     if pending:
         game_library_refresh_task = create_logged_task(refresh_game_libraries(pending), "game library refresh")
+    else:
+        schedule_game_metadata_refresh_if_needed({
+            game["game_id"]
+            for library in libraries.values()
+            for game in library.get("games", [])
+        })
 
 
 async def refresh_game_libraries(users: list[dict]):
@@ -950,12 +957,35 @@ async def refresh_game_libraries(users: list[dict]):
             all_game_ids.update(game["game_id"] for game in games)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             logger.warning("Could not load game library for %s: %s: %s", username, type(exc).__name__, exc)
-    cached_metadata = db.get_game_metadata(all_game_ids)
-    for game_id in sorted(all_game_ids - set(cached_metadata)):
+    await refresh_game_metadata(all_game_ids)
+
+
+def game_ids_needing_artwork(game_ids) -> set[int]:
+    ids = {int(game_id) for game_id in game_ids if game_id}
+    cached_metadata = db.get_game_metadata(ids)
+    return {
+        game_id for game_id in ids
+        if game_id not in cached_metadata
+        or not cached_metadata[game_id].get("image_box_art_checked_at")
+    }
+
+
+async def refresh_game_metadata(game_ids):
+    for game_id in sorted(game_ids_needing_artwork(game_ids)):
         try:
             db.save_game_metadata(await ra_client.game_summary(game_id))
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             logger.warning("Could not load all-time metadata for game %s: %s: %s", game_id, type(exc).__name__, exc)
+
+
+def schedule_game_metadata_refresh_if_needed(game_ids):
+    global game_metadata_refresh_task
+    pending = game_ids_needing_artwork(game_ids)
+    if not pending or (game_metadata_refresh_task and not game_metadata_refresh_task.done()):
+        return
+    game_metadata_refresh_task = create_logged_task(
+        refresh_game_metadata(pending), "game artwork refresh",
+    )
 
 
 def schedule_user_snapshot_refresh_if_needed(users: list[dict], profile_cache: dict):
@@ -1715,8 +1745,69 @@ async def onboarding_finish(destination: str = Form("dashboard")):
     return RedirectResponse(url="/display" if destination == "display" else "/", status_code=303)
 
 
+def history_user_options() -> list[dict]:
+    """Return tracked users with the identity used by the History UI."""
+    profiles = db.get_user_profiles()
+    return [
+        {
+            **user,
+            "display_name": profiles.get(user["ra_username"].lower(), {}).get("canonical_username")
+            or user["ra_username"],
+            "avatar": profiles.get(user["ra_username"].lower(), {}).get("avatar"),
+        }
+        for user in db.get_tracked_users()
+    ]
+
+
+def select_history_user(users: list[dict], requested: str | None) -> dict | None:
+    if not users:
+        return None
+    if requested:
+        return next((
+            user for user in users
+            if requested.casefold() in {
+                user["ra_username"].casefold(),
+                (user.get("ra_ulid") or "").casefold(),
+            }
+        ), None)
+    return users[0]
+
+
+def history_wrapped_context(user: dict | None) -> dict:
+    """Build compact Wrapped availability without refreshing external data."""
+    if user is None:
+        return {"in_progress": None, "completed": []}
+    try:
+        summaries = WrappedService(db).generate_for_user(user["ra_username"])
+    except ValueError:
+        return {"in_progress": None, "completed": []}
+
+    in_progress = next((summary for summary in reversed(summaries) if summary.status == "in_progress"), None)
+    completed = []
+    selector = WrappedStorySelector()
+    for summary in reversed(summaries):
+        if (
+            summary.status != "final"
+            or not summary.coverage.complete
+            or summary.headline.hardcore_achievements == 0
+        ):
+            continue
+        plan = selector.build_plan(summary)
+        if plan is None:
+            continue
+        completed.append({
+            "summary": summary,
+            "top_game": summary.games.top_by_achievements,
+            "top_console": (
+                summary.consoles.top_by_achievements.console
+                if summary.consoles.top_by_achievements else None
+            ),
+        })
+    return {"in_progress": in_progress, "completed": completed}
+
+
 @app.get("/history")
-async def history(request: Request, week: str | None = None):
+async def history(request: Request, week: str | None = None, user: str | None = None):
     backfill_pending = False
     try:
         await asyncio.wait_for(
@@ -1781,6 +1872,9 @@ async def history(request: Request, week: str | None = None):
     summary["retro_points_display"] = format_points(summary["retro_points"])
     summary["beaten_display"] = format_points(summary["beaten"]) if summary["beaten"] is not None else "—"
     summary["masteries_display"] = format_points(summary["masteries"]) if summary["masteries"] is not None else "—"
+    history_users = history_user_options()
+    selected_history_user = select_history_user(history_users, user)
+    wrapped = history_wrapped_context(selected_history_user)
 
     return templates.TemplateResponse(
         request=request,
@@ -1799,6 +1893,10 @@ async def history(request: Request, week: str | None = None):
             "played_game_users": played_game_users,
             "summary": summary,
             "backfill_pending": backfill_pending,
+            "history_users": history_users,
+            "selected_history_user": selected_history_user,
+            "wrapped_in_progress": wrapped["in_progress"],
+            "wrapped_completed": wrapped["completed"],
         },
     )
 
@@ -1829,6 +1927,113 @@ async def charts(request: Request):
             "chart_js_version": static_asset_version(str(runtime.resource_path("static", "js", "charts.js"))),
         },
     )
+
+
+def wrapped_user_year_context(username: str, wrapped_year: int) -> dict:
+    """Build one cached story for a specific local user and completed year."""
+    wrapped_service = WrappedService(db)
+    selector = WrappedStorySelector()
+    summaries = wrapped_service.generate_for_user(username)
+    summary = next((item for item in summaries if item.wrapped_year == wrapped_year), None)
+    if (
+        summary is None
+        or summary.status != "final"
+        or not summary.coverage.complete
+        or summary.headline.hardcore_achievements == 0
+    ):
+        raise HTTPException(status_code=404, detail=f"Completed Wrapped {wrapped_year} is not available")
+    previous = next((
+        item for item in reversed(summaries)
+        if item.wrapped_year < wrapped_year
+        and item.status == "final"
+        and item.coverage.complete
+        and item.headline.hardcore_achievements > 0
+    ), None)
+    plan = selector.build_plan(summary, previous)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Completed Wrapped {wrapped_year} is not available")
+    return {"summary": summary, "plan": plan}
+
+
+def wrapped_prototype_context(wrapped_year: int) -> dict:
+    """Build one cached development story without refreshing RetroAchievements data."""
+    profiles, _ = db.get_all_time_chart_cache()
+    for storage_username in profiles:
+        try:
+            return wrapped_user_year_context(storage_username, wrapped_year)
+        except (HTTPException, ValueError):
+            continue
+    raise HTTPException(status_code=404, detail=f"No completed local Wrapped {wrapped_year} sample is available")
+
+
+def wrapped_page_response(
+    request: Request,
+    context: dict,
+    *,
+    history_url: str | None = None,
+    prototype_years: tuple[int, ...] = (),
+):
+    schedule_game_metadata_refresh_if_needed(
+        game.game_id for game in context["summary"].details.games
+    )
+    context.update({
+        "available_prototype_years": prototype_years,
+        "wrapped_history_url": history_url,
+        "wrapped_css_version": static_asset_version(str(runtime.resource_path("static", "css", "wrapped.css"))),
+        "wrapped_js_version": static_asset_version(str(runtime.resource_path("static", "js", "wrapped.js"))),
+    })
+    return templates.TemplateResponse(request=request, name="wrapped.html", context=context)
+
+
+@app.get("/history/wrapped/{year}", include_in_schema=False)
+async def history_wrapped(request: Request, year: int, user: str | None = None):
+    users = history_user_options()
+    selected = select_history_user(users, user)
+    if selected is None:
+        raise HTTPException(status_code=404, detail="Tracked player is not available")
+    try:
+        context = wrapped_user_year_context(selected["ra_username"], year)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=f"Completed Wrapped {year} is not available") from exc
+    history_url = f"/history?{urlencode({'user': selected['ra_username']})}"
+    return wrapped_page_response(request, context, history_url=history_url)
+
+
+@app.get("/dev/wrapped", include_in_schema=False)
+async def wrapped_prototype(request: Request, year: int = 2025):
+    if runtime.is_packaged:
+        raise HTTPException(status_code=404, detail="Not found")
+    context = wrapped_prototype_context(year)
+    return wrapped_page_response(request, context, prototype_years=(2024, 2025))
+
+
+@app.get("/api/wrapped/image", include_in_schema=False)
+async def wrapped_export_image(url: str):
+    """Return RA-hosted artwork from the local origin for canvas exports."""
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not (
+        hostname == "retroachievements.org"
+        or hostname.endswith(".retroachievements.org")
+    ):
+        raise HTTPException(status_code=400, detail="Only RetroAchievements images are allowed")
+    timeout = aiohttp.ClientTimeout(total=15)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                url, ssl=ra_client.ssl_context, allow_redirects=False,
+            ) as upstream:
+                if upstream.status != 200:
+                    raise HTTPException(status_code=upstream.status, detail="Artwork is unavailable")
+                content_type = upstream.headers.get("content-type", "")
+                if not content_type.startswith("image/"):
+                    raise HTTPException(status_code=415, detail="Artwork response was not an image")
+                body = await upstream.read()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail="Could not load artwork") from exc
+    if len(body) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Artwork is too large")
+    return Response(content=body, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/charts/all-time")
@@ -2007,6 +2212,7 @@ async def stop_data_polling():
     background_tasks = [
         weekly_refresh_task,
         game_library_refresh_task,
+        game_metadata_refresh_task,
         history_backfill_task,
         user_snapshot_refresh_task,
         current_activity_poll_task,

@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ plan.wrapped_year }} Wrapped · LeftoverAchievements</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+    <link rel="stylesheet" href="/static/css/wrapped.css?v={{ wrapped_css_version }}" />
+  </head>
+  <body class="wrapped-page wrapped-theme-{{ plan.wrapped_year % 5 }}" data-wrapped-year="{{ plan.wrapped_year }}" data-wrapped-username="{{ summary.canonical_username }}">
+    {% set month_names = {"01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun", "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"} %}
+    {% set ranked_games = summary.details.games|sort(attribute="achievements", reverse=true) %}
+    {% set art_games = ranked_games|selectattr("image")|list %}
+    {% set cover_games = ranked_games|selectattr("cover_image")|list %}
+    <a class="wrapped-skip" href="#wrapped-story">Skip to Wrapped story</a>
+
+    <header class="wrapped-chrome">
+      <a class="wrapped-brand" href="/" aria-label="Return to LeftoverAchievements">
+        <img src="/static/images/leftover-achievements-logo.png" alt="" width="28" height="28" />
+        <span>LeftoverAchievements</span>
+      </a>
+      {% if wrapped_history_url %}<a class="wrapped-history-link" href="{{ wrapped_history_url }}"><span aria-hidden="true">←</span> History</a>{% endif %}
+      {% if available_prototype_years %}
+        <nav class="wrapped-year-switcher" aria-label="Prototype year">
+          {% for year in available_prototype_years %}
+            <a href="/dev/wrapped?year={{ year }}"{% if year == plan.wrapped_year %} aria-current="page"{% endif %}>{{ year }}</a>
+          {% endfor %}
+        </nav>
+      {% endif %}
+      <span class="wrapped-counter" aria-live="polite"><strong data-current-card>1</strong> / {{ plan.cards|length }}</span>
+    </header>
+
+    <nav class="wrapped-progress" aria-label="Wrapped story progress">
+      {% for card in plan.cards %}
+        <button type="button" data-progress-index="{{ loop.index0 }}" aria-label="Go to story {{ loop.index }}: {{ card.type|replace('_', ' ') }}"><span></span></button>
+      {% endfor %}
+    </nav>
+
+    <main id="wrapped-story" class="wrapped-story" data-wrapped-story>
+      {% for card in plan.cards %}
+        <section class="wrapped-card wrapped-card--{{ card.type }}" id="story-{{ loop.index }}" data-story-card data-card-type="{{ card.type }}" data-card-variant="{{ card.variant }}" aria-labelledby="story-title-{{ loop.index }}">
+          <div class="wrapped-card__frame">
+            <p class="wrapped-kicker">{{ "%02d"|format(loop.index) }} / {{ "%02d"|format(plan.cards|length) }} · {{ card.type|replace('_', ' ') }}</p>
+
+            {% if card.type == "intro" %}
+              <div class="intro-composition{% if cover_games %} intro-composition--with-art{% endif %}">
+                {% if cover_games %}
+                  <div class="intro-art-stack" aria-hidden="true">
+                    <img class="intro-art-wash" src="{{ cover_games[0].cover_image }}" alt="" />
+                    <div class="intro-cover-gallery">
+                      {% for game in cover_games[:5] %}<img src="{{ game.cover_image }}" alt="" />{% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+                <div class="intro-copy">
+                  <p class="intro-year">{{ card.headline_data.wrapped_year }}</p>
+                  <h1 id="story-title-{{ loop.index }}">Wrapped</h1>
+                  <p class="wrapped-deck">Your year on RetroAchievements</p>
+                  <p class="wrapped-period">{{ card.headline_data.period_start.strftime("%b") }} {{ card.headline_data.period_start.day }}, {{ card.headline_data.period_start.year }} <span aria-hidden="true">→</span><span class="sr-only">through</span> {{ card.headline_data.period_end.strftime("%b") }} {{ card.headline_data.period_end.day }}, {{ card.headline_data.period_end.year }}</p>
+                </div>
+                <div class="intro-profile">
+                  {% if card.headline_data.avatar %}<img src="{{ card.headline_data.avatar }}" alt="{{ card.headline_data.username }} profile image" />{% endif %}
+                  <span><small>Wrapped for</small>{{ card.headline_data.username }}</span>
+                </div>
+              </div>
+
+            {% elif card.type == "headline_totals" %}
+              <div class="headline-total">
+                <h2 id="story-title-{{ loop.index }}"><span class="mega-number">{{ "{:,}".format(card.headline_data.hardcore_achievements) }}</span><span>hardcore achievements</span></h2>
+                <div class="support-pair">
+                  <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
+                  <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                </div>
+              </div>
+
+            {% elif card.type == "year_at_a_glance" %}
+              <div class="glance-composition">
+                <div class="glance-heading">
+                  <span>One year in four numbers</span>
+                  <h2 id="story-title-{{ loop.index }}">The year,<br />at a glance.</h2>
+                </div>
+                <p class="glance-primary"><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
+                <div class="glance-secondary">
+                  <p><strong>{{ card.headline_data.progress_games }}</strong><span>games</span></p>
+                  <p><strong>{{ card.headline_data.consoles }}</strong><span>consoles</span></p>
+                  <p><strong>{{ card.headline_data.masteries }}</strong><span>masteries</span></p>
+                </div>
+              </div>
+
+            {% elif card.type == "game_of_the_year" %}
+              <div class="game-hero">
+                <div class="game-art-wrap">
+                  {% if card.headline_data.image %}<img class="game-art" src="{{ card.headline_data.image }}" alt="Cover art for {{ card.headline_data.title }}" />{% endif %}
+                  <span class="game-rank">#1</span>
+                </div>
+                <div>
+                  <p class="wrapped-overline">Game of the year</p>
+                  <h2 id="story-title-{{ loop.index }}">{{ card.headline_data.title }}</h2>
+                  <p class="wrapped-deck">{{ card.headline_data.console or "Unknown console" }}</p>
+                  {% if card.variant == "dominant_all_metrics" %}<p class="metric-sweep">#1 in every game metric</p>{% endif %}
+                  {% if card.variant == "dominant_most_metrics" %}<p class="metric-sweep split">{{ card.supporting_data.dominant_metric_game.title }} led {{ card.supporting_data.dominant_metric_wins }} other metrics</p>{% endif %}
+                  {% if card.variant == "split_leaders" %}<p class="metric-sweep split">Different games led different metrics</p>{% endif %}
+                  <div class="game-metrics">
+                    <p><strong>{{ card.headline_data.achievements }}</strong><span>achievements</span></p>
+                    <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
+                    <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                    <p><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
+                  </div>
+                </div>
+              </div>
+
+            {% elif card.type == "game_focus" %}
+              {% set focus_art_limit = 10 if card.variant == "broad_year" else 5 %}
+              {% set focus_art_games = art_games[:focus_art_limit] %}
+              <div class="focus-layout focus-layout--{{ card.variant }}{% if not focus_art_games %} focus-layout--no-art{% endif %}">
+                <div class="focus-heading">
+                  <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
+                  {% if card.variant == "broad_year" %}
+                    <h2 id="story-title-{{ loop.index }}">A year spread across many worlds.</h2>
+                  {% elif card.variant == "focused_year" %}
+                    <h2 id="story-title-{{ loop.index }}">A few games carried the year.</h2>
+                  {% else %}
+                    <h2 id="story-title-{{ loop.index }}">Favorites, with room to roam.</h2>
+                  {% endif %}
+                </div>
+                {% if focus_art_games %}
+                  <div class="focus-art-field" aria-label="Leading games from the year">
+                    {% for game in focus_art_games %}
+                      <figure><img src="{{ game.image }}" alt="Cover art for {{ game.title }}" /><figcaption>{{ game.title|replace('~Homebrew~ ', '') }}</figcaption></figure>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                <div class="focus-shares" aria-label="Achievement share by leading games">
+                  {% for label, value in [("Top 1", card.headline_data.top_1_share), ("Top 3", card.headline_data.top_3_share), ("Top 5", card.headline_data.top_5_share), ("Top 10", card.headline_data.top_10_share)] %}
+                    <p{% if label == "Top 10" %} class="is-key"{% endif %}><span>{{ label }}</span><strong>{{ "%.1f"|format(value) }}%</strong></p>
+                  {% endfor %}
+                </div>
+              </div>
+
+            {% elif card.type == "console" %}
+              <div class="console-layout">
+                <p class="wrapped-overline">Top console</p>
+                <h2 id="story-title-{{ loop.index }}">{{ card.headline_data.console }}</h2>
+                <p class="console-share">{{ "%.1f"|format(card.headline_data.achievement_share) }}<span>%</span></p>
+                <p class="wrapped-deck">of all achievements</p>
+                <div class="console-facts">
+                  <p><strong>{{ "{:,}".format(card.supporting_data.top_console_values.achievements) }}</strong><span>achievements</span></p>
+                  <p><strong>{{ card.supporting_data.top_console_values.progress_games }}</strong><span>progress-games</span></p>
+                  {% if card.supporting_data.console_sweep %}<p class="sweep-stamp">Led achievements<br />games · points · RetroPoints</p>{% endif %}
+                </div>
+              </div>
+
+            {% elif card.type == "genre" %}
+              <div class="genre-layout genre-layout--{{ card.variant }}">
+                <div class="genre-lead">
+                  <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
+                  <h2 id="story-title-{{ loop.index }}">{{ card.headline_data.genre }}</h2>
+                  <p class="genre-share">{{ "%.1f"|format(card.headline_data.share) }}%</p>
+                  <p class="wrapped-deck">weighted achievement share</p>
+                </div>
+                <div class="genre-breadth">
+                  <div class="genre-field" aria-label="Other leading genres">
+                  {% for genre in summary.genres.achievement_shares[1:8] %}
+                    <span style="--weight: {{ genre.share_percent }}">{{ genre.genre }} <small>{{ "%.1f"|format(genre.share_percent) }}%</small></span>
+                  {% endfor %}
+                  </div>
+                  <p class="genre-count"><strong>{{ card.supporting_data.known_genre_labels }}</strong> known genre labels{% if card.supporting_data.known_genre_labels > 8 %}<span>+{{ card.supporting_data.known_genre_labels - 8 }} more beyond the leaders</span>{% endif %}</p>
+                </div>
+                <p class="coverage-note">Genre metadata coverage: {{ "%.1f"|format(card.supporting_data.coverage_percent) }}%. Unknown is excluded from the ranked field.</p>
+              </div>
+
+            {% elif card.type == "monthly_pattern" %}
+              {% set busiest_month_data = card.supporting_data.months|selectattr('month', 'equalto', card.headline_data.busiest_month)|first %}
+              <div class="month-heading">
+                <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
+                <h2 id="story-title-{{ loop.index }}">{% if card.variant == "steady_year" %}All twelve months showed up.{% elif card.variant == "dominant_month" %}One month changed the shape of the year.{% else %}The year found its rhythm.{% endif %}</h2>
+              </div>
+              <div class="month-chart" aria-label="Achievements by Wrapped month">
+                {% for month in card.supporting_data.months %}
+                  <div class="month-column{% if month.month == card.headline_data.busiest_month %} is-busiest{% endif %}" style="--month-share: {{ (month.achievements / busiest_month_data.achievements * 100)|round(2) }}">
+                    <strong>{{ month.achievements }}</strong><i></i><span>{{ month_names[month.month[5:7]] }}</span>
+                  </div>
+                {% endfor %}
+              </div>
+              <div class="month-notes">
+                <p><span>Most achievements</span><strong>{{ month_names[card.headline_data.busiest_month[5:7]] }} · {{ busiest_month_data.achievements }}</strong></p>
+                {% if card.supporting_data.biggest_points_month == card.supporting_data.biggest_retro_points_month %}
+                  <p><span>Most points + RetroPoints</span><strong>{{ month_names[card.supporting_data.biggest_points_month[5:7]] }}</strong></p>
+                {% else %}
+                  <p><span>Most points</span><strong>{{ month_names[card.supporting_data.biggest_points_month[5:7]] }}</strong></p>
+                  <p><span>Most RetroPoints</span><strong>{{ month_names[card.supporting_data.biggest_retro_points_month[5:7]] }}</strong></p>
+                {% endif %}
+              </div>
+
+            {% elif card.type == "biggest_day" %}
+              <div class="day-layout">
+                <div class="calendar-block">
+                  <span>{{ card.headline_data.date.strftime("%b") }}</span>
+                  <strong>{{ card.headline_data.date.strftime("%-d") }}</strong>
+                  <small>{{ card.headline_data.weekday }}</small>
+                </div>
+                <div>
+                  <p class="wrapped-overline">Biggest day</p>
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.achievements }}</span> achievements</h2>
+                  <p class="wrapped-deck">Across {{ card.headline_data.games_active }} games</p>
+                  <div class="mini-cover-row">
+                    {% for game in card.supporting_data.active_games[:7] %}
+                      {% if game.image %}<img src="{{ game.image }}" alt="{{ game.title }}" title="{{ game.title }}" />{% endif %}
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+
+            {% elif card.type == "activity_pattern" %}
+              <div class="streak-layout">
+                <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
+                {% if "streak" in card.variant %}
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.days }}</span> days straight</h2>
+                  <p class="wrapped-deck">{{ card.headline_data.start_date.strftime("%b") }} {{ card.headline_data.start_date.day }} → {{ card.headline_data.end_date.strftime("%b") }} {{ card.headline_data.end_date.day }} · {{ "{:,}".format(card.supporting_data.streak_achievements) }} achievements</p>
+                  <div class="streak-ticks" aria-label="{{ card.headline_data.days }} consecutive active days">
+                    {% for tick in range(card.headline_data.days) %}<i></i>{% endfor %}
+                  </div>
+                {% elif "comeback" in card.variant %}
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.days }}</span> quiet days</h2>
+                  <p class="wrapped-deck">Then activity returned on {{ card.headline_data.activity_after.strftime("%b") }} {{ card.headline_data.activity_after.day }}.</p>
+                {% else %}
+                  <h2 id="story-title-{{ loop.index }}">{{ card.headline_data.weekday }}</h2>
+                  <p class="wrapped-deck">{{ "%.1f"|format(card.headline_data.share) }}% of the year's achievements.</p>
+                {% endif %}
+              </div>
+
+            {% elif card.type == "mastery" %}
+              <div class="mastery-heading">
+                <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
+                {% if card.supporting_data.largest_cluster_size >= 3 %}
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.supporting_data.largest_cluster_size }}</span> masteries.<br />One rapid run.</h2>
+                  <p class="wrapped-deck">{{ card.headline_data.masteries }} masteries across the full year</p>
+                {% else %}
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.masteries }}</span> games mastered.</h2>
+                  <p class="wrapped-deck">A chronological look at the year's completions</p>
+                {% endif %}
+              </div>
+              <div class="mastery-cluster">
+                {% set displayed_masteries = card.supporting_data.largest_cluster if card.supporting_data.largest_cluster else card.supporting_data.timeline[:4] %}
+                {% for mastery in displayed_masteries %}
+                  <article>
+                    {% if mastery.image %}<img src="{{ mastery.image }}" alt="Cover art for {{ mastery.game_title }}" />{% endif %}
+                    <div><span>{{ mastery.awarded_at.strftime("%I:%M %p").lstrip("0") }}</span><h3>{{ mastery.game_title|replace('~Homebrew~ ', '') }}</h3></div>
+                  </article>
+                {% endfor %}
+              </div>
+
+            {% elif card.type == "special_highlight" %}
+              <div class="weird-layout">
+                {% if card.variant == "unusual_retropoint_day" %}
+                  <p class="wrapped-overline">Unusual RetroPoint day · {{ card.headline_data.date.strftime("%b") }} {{ card.headline_data.date.day }}, {{ card.headline_data.date.year }}</p>
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.hardcore_points }}</span><small>points</small><b>vs</b><span>{{ card.headline_data.retro_points }}</span><small>RetroPoints</small></h2>
+                  <p class="ratio">{{ "%.2f"|format(card.headline_data.ratio) }}×</p>
+                {% elif card.variant == "huge_comeback" %}
+                  <p class="wrapped-overline">A second act</p>
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.days }}</span><small>quiet days</small></h2>
+                  <p class="ratio">Activity returned</p>
+                {% endif %}
+              </div>
+
+            {% elif card.type == "year_over_year" %}
+              <div class="growth-layout">
+                <p class="wrapped-overline">{{ card.headline_data.previous_wrapped_year }} → {{ plan.wrapped_year }}</p>
+                <h2 id="story-title-{{ loop.index }}">Everything got bigger.</h2>
+                <div class="growth-list">
+                  {% for key, label in [("hardcore_achievements", "Achievements"), ("retro_points", "RetroPoints"), ("active_days", "Active days"), ("progress_games", "Games")] %}
+                    {% set change = card.supporting_data.changes[key] %}
+                    <p><span>{{ label }}</span><strong>{{ "{:,}".format(change.previous) }} <i>→</i> {{ "{:,}".format(change.current) }}</strong><b>+{{ "%.1f"|format(change.percent_change) }}%</b></p>
+                  {% endfor %}
+                </div>
+              </div>
+
+            {% elif card.type == "final_recap" %}
+              {% set recap_game_matches = summary.details.games|selectattr("game_id", "equalto", card.headline_data.top_game.game_id)|list %}
+              {% set recap_game = recap_game_matches[0] if recap_game_matches else none %}
+              {% set recap_cover = recap_game.cover_image if recap_game else none %}
+              {% set recap_support_games = art_games|rejectattr("game_id", "equalto", card.headline_data.top_game.game_id)|list %}
+              <div class="recap-layout{% if not recap_cover %} recap-layout--no-art{% endif %}"{% if recap_game and recap_game.console %} data-cover-console="{{ recap_game.console }}"{% endif %}>
+                <div class="recap-art" aria-hidden="true">
+                  {% if recap_cover %}
+                    <img class="recap-art__hero" src="{{ recap_cover }}" alt="" />
+                  {% endif %}
+                  {% for game in recap_support_games[:3] %}<img class="recap-art__support" src="{{ game.image }}" alt="" />{% endfor %}
+                </div>
+                <div class="recap-mobile-supports" aria-hidden="true">
+                  {% for game in recap_support_games[:3] %}<img src="{{ game.image }}" alt="" />{% endfor %}
+                </div>
+                <div class="recap-title"><span>{{ plan.wrapped_year }}</span><h2 id="story-title-{{ loop.index }}">Wrapped</h2></div>
+                <div class="recap-profile">
+                  {% if summary.avatar %}<img src="{{ summary.avatar }}" alt="{{ summary.canonical_username }} profile image" />{% endif %}
+                  <p><span>Wrapped for</span><strong>{{ summary.canonical_username }}</strong></p>
+                </div>
+                <div class="recap-stats">
+                  <p><strong>{{ "{:,}".format(card.headline_data.hardcore_achievements) }}</strong><span>achievements</span></p>
+                  <p><strong>{{ card.headline_data.progress_games }}</strong><span>games</span></p>
+                  <p><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
+                  <p><strong>{{ card.headline_data.masteries }}</strong><span>masteries</span></p>
+                  {% set hardcore_points_sign = "+" if card.headline_data.hardcore_points > 0 else "" %}
+                  <p class="recap-points"><span>Hardcore Points <small>(RetroPoints)</small></span><strong>{{ hardcore_points_sign }}{{ "{:,}".format(card.headline_data.hardcore_points) }} <small>({{ "{:,}".format(card.headline_data.retro_points) }})</small></strong></p>
+                </div>
+                <dl class="recap-leaders">
+                  <div><dt>Game of the year</dt><dd>{{ card.headline_data.top_game.title }}</dd></div>
+                  <div><dt>Top console</dt><dd>{{ card.headline_data.top_console }}</dd></div>
+                  {% if card.headline_data.top_genre %}<div><dt>Top genre</dt><dd>{{ card.headline_data.top_genre }}</dd></div>{% endif %}
+                </dl>
+                <footer><img src="/static/images/leftover-achievements-logo.png" alt="" width="28" height="28" /><strong>LeftoverAchievements</strong><span>{{ card.headline_data.period_start.strftime("%b") }} {{ card.headline_data.period_start.day }}, {{ card.headline_data.period_start.year }} → {{ card.headline_data.period_end.strftime("%b") }} {{ card.headline_data.period_end.day }}, {{ card.headline_data.period_end.year }}</span></footer>
+              </div>
+              <div class="wrapped-export-actions" aria-label="Save your Wrapped recap">
+                <button type="button" data-wrapped-export="landscape"><span aria-hidden="true">↓</span> Save horizontal PNG</button>
+                <button type="button" data-wrapped-export="story"><span aria-hidden="true">↓</span> Save for Stories</button>
+                <p data-wrapped-export-status aria-live="polite"></p>
+              </div>
+            {% endif %}
+          </div>
+        </section>
+      {% endfor %}
+    </main>
+
+    <div class="wrapped-controls" aria-label="Story controls">
+      <button type="button" data-story-previous aria-label="Previous story">↑</button>
+      <button type="button" data-story-next aria-label="Next story">↓</button>
+    </div>
+    <script src="/static/vendor/html2canvas.min.js"></script>
+    <script src="/static/js/wrapped.js?v={{ wrapped_js_version }}"></script>
+  </body>
+</html>

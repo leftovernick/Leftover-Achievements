@@ -104,15 +104,17 @@ class RetroAchievements:
         return bool(data.get("Title") or data.get("GameTitle") or data.get("title"))
 
     async def game_summary(self, game_id: int) -> dict:
-        """Return stable console and genre metadata for a game."""
+        """Return stable metadata and presentation artwork for a game."""
         data = await self._get_json("API_GetGame.php", {"i": int(game_id)})
         if not isinstance(data, dict):
             raise ValueError("Unexpected RetroAchievements API response")
+        image_box_art = data.get("ImageBoxArt") or data.get("imageBoxArt")
         return {
             "game_id": int(game_id),
             "game_title": data.get("Title") or data.get("GameTitle") or data.get("title") or f"Game #{game_id}",
             "console": data.get("ConsoleName") or data.get("consoleName") or data.get("Console") or data.get("console"),
             "genre": data.get("Genre") or data.get("genre"),
+            "image_box_art": urljoin(RA_BASE_URL, image_box_art) if image_box_art else None,
         }
 
     async def user_summary(

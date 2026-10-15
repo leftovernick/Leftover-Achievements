@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LeftoverAchievements History</title>
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
-    <link rel="stylesheet" href="/static/css/styles.css?v=history-games-1" />
+    <link rel="stylesheet" href="/static/css/styles.css?v=history-wrapped-6" />
   </head>
   <body class="web-dashboard history-page">
     <header class="top-nav">
@@ -21,6 +21,78 @@
     </header>
 
     <main class="dashboard-shell history-shell">
+      <section class="panel history-wrapped-panel" aria-labelledby="history-wrapped-title">
+        <div class="history-wrapped-header">
+          <div>
+            <p class="eyebrow">Annual Story</p>
+            <h2 id="history-wrapped-title">Your Wrapped</h2>
+            <p>A yearly look at your RetroAchievements activity.</p>
+          </div>
+          {% if history_users %}
+            <form method="get" action="/history" class="history-wrapped-user">
+              {% if selected_week_start %}<input type="hidden" name="week" value="{{ selected_week_start }}" />{% endif %}
+              <label for="wrapped-history-user">Player</label>
+              <div>
+                <select id="wrapped-history-user" name="user">
+                  {% for option in history_users %}
+                    <option value="{{ option.ra_username }}"{% if selected_history_user and option.ra_username|lower == selected_history_user.ra_username|lower %} selected{% endif %}>{{ option.display_name }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Show</button>
+              </div>
+            </form>
+          {% endif %}
+        </div>
+
+        {% if selected_history_user %}
+          <div class="history-wrapped-list">
+            {% if wrapped_in_progress %}
+              <article class="history-wrapped-card history-wrapped-card--progress history-wrapped-card--theme-{{ wrapped_in_progress.wrapped_year % 5 }}">
+                <div class="history-wrapped-year"><strong>{{ wrapped_in_progress.wrapped_year }}</strong><span>Wrapped</span></div>
+                <div class="history-wrapped-copy">
+                  <span class="history-wrapped-status">In progress</span>
+                  <p>{{ wrapped_in_progress.period_start.strftime("%b") }} {{ wrapped_in_progress.period_start.day }}, {{ wrapped_in_progress.period_start.year }} &ndash; {{ wrapped_in_progress.period_end.strftime("%b") }} {{ wrapped_in_progress.period_end.day }}, {{ wrapped_in_progress.period_end.year }}</p>
+                  <small>Building as {{ selected_history_user.display_name }} plays.</small>
+                </div>
+              </article>
+            {% endif %}
+
+            {% for entry in wrapped_completed %}
+              {% set wrapped = entry.summary %}
+              <a class="history-wrapped-card history-wrapped-card--complete history-wrapped-card--theme-{{ wrapped.wrapped_year % 5 }}" href="/history/wrapped/{{ wrapped.wrapped_year }}?user={{ selected_history_user.ra_username|urlencode }}" data-wrapped-link>
+                <div class="history-wrapped-year"><strong>{{ wrapped.wrapped_year }}</strong><span>Wrapped</span></div>
+                <div class="history-wrapped-copy">
+                  <p>{{ wrapped.period_start.strftime("%b") }} {{ wrapped.period_start.day }}, {{ wrapped.period_start.year }} &ndash; {{ wrapped.period_end.strftime("%b") }} {{ wrapped.period_end.day }}, {{ wrapped.period_end.year }}</p>
+                  <div class="history-wrapped-highlights">
+                    {% if entry.top_game %}
+                      <p class="history-wrapped-feature"><span>Game of the year</span><strong>{{ entry.top_game.title }}</strong></p>
+                    {% endif %}
+                    {% if entry.top_console %}
+                      <p class="history-wrapped-feature history-wrapped-feature--console"><span>Top console</span><strong>{{ entry.top_console }}</strong></p>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="history-wrapped-totals">
+                  <p><strong>{{ "{:,}".format(wrapped.headline.hardcore_achievements) }}</strong><span>achievements</span></p>
+                  <p><strong>{{ wrapped.headline.games_with_progress }}</strong><span>games</span></p>
+                </div>
+                <span class="history-wrapped-action">View Wrapped <b aria-hidden="true">→</b></span>
+              </a>
+            {% else %}
+              <p class="history-wrapped-empty"><strong>No completed Wrapped years yet.</strong><span>Your first Wrapped will be ready after October 31.</span></p>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="history-wrapped-empty">
+            {% if history_users %}
+              <strong>The selected player is not available.</strong><span>Choose a tracked player to view Wrapped history.</span>
+            {% else %}
+              <strong>No tracked player is available.</strong><span>Add a player before viewing Wrapped history.</span>
+            {% endif %}
+          </p>
+        {% endif %}
+      </section>
+
       <section class="dashboard-hero panel">
         <div>
           <p class="eyebrow">Completed Weekly Snapshots</p>
@@ -45,9 +117,10 @@
             data-week-list
             data-next-offset="{{ weeks_page_size }}"
             data-selected-week="{{ selected_week_start or '' }}"
+            data-history-user="{{ selected_history_user.ra_username if selected_history_user else '' }}"
           >
             {% for item in weeks %}
-              <a href="/history?week={{ item.week_start }}"{% if item.week_start == selected_week_start %} class="active" aria-current="page"{% endif %}>{{ item.label }}</a>
+              <a href="/history?week={{ item.week_start }}{% if selected_history_user %}&amp;user={{ selected_history_user.ra_username|urlencode }}{% endif %}"{% if item.week_start == selected_week_start %} class="active" aria-current="page"{% endif %}>{{ item.label }}</a>
             {% else %}
               <span class="empty">No completed weeks are available yet.</span>
             {% endfor %}
@@ -144,7 +217,8 @@
           <p class="history-limitation">Beaten and mastery totals count saved game-award records and may be incomplete; they are not estimated from unlocks. Backfilled scores use available Hardcore unlocks and current point values, so past score adjustments may not be reconstructable.</p>
         </div>
       </div>
+
     </main>
-    <script src="/static/js/history.js?v=history-2"></script>
+    <script src="/static/js/history.js?v=history-4"></script>
   </body>
 </html>

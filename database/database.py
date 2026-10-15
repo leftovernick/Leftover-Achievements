@@ -76,10 +76,24 @@ def init_db():
             game_title TEXT NOT NULL,
             console TEXT,
             genre TEXT,
+            image_box_art TEXT,
+            image_box_art_checked_at TEXT,
             refreshed_at TEXT NOT NULL
         )
         """
     )
+    metadata_columns = {row[1] for row in cur.execute("PRAGMA table_info(game_metadata_cache)")}
+    if "image_box_art" not in metadata_columns:
+        cur.execute("ALTER TABLE game_metadata_cache ADD COLUMN image_box_art TEXT")
+    if "image_box_art_checked_at" not in metadata_columns:
+        cur.execute("ALTER TABLE game_metadata_cache ADD COLUMN image_box_art_checked_at TEXT")
+        cur.execute(
+            """
+            UPDATE game_metadata_cache
+            SET image_box_art_checked_at = refreshed_at
+            WHERE image_box_art IS NOT NULL
+            """
+        )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS user_game_library_cache (
@@ -740,26 +754,42 @@ def get_game_metadata(game_ids: list[int] | set[int]) -> dict[int, dict]:
     placeholders = ", ".join("?" for _ in ids)
     with get_conn() as conn:
         rows = conn.execute(
-            f"SELECT game_id, game_title, console, genre, refreshed_at FROM game_metadata_cache WHERE game_id IN ({placeholders})",
+            f"SELECT game_id, game_title, console, genre, image_box_art, image_box_art_checked_at, refreshed_at FROM game_metadata_cache WHERE game_id IN ({placeholders})",
             ids,
         ).fetchall()
         return {row["game_id"]: dict(row) for row in rows}
 
 
 def save_game_metadata(metadata: dict):
+    refreshed_at = datetime.now(timezone.utc).isoformat()
+    image_box_art_checked_at = (
+        refreshed_at if "image_box_art" in metadata
+        else metadata.get("image_box_art_checked_at")
+    )
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO game_metadata_cache (game_id, game_title, console, genre, refreshed_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO game_metadata_cache (
+                game_id, game_title, console, genre, image_box_art,
+                image_box_art_checked_at, refreshed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
                 game_title = excluded.game_title,
                 console = excluded.console,
                 genre = excluded.genre,
+                image_box_art = COALESCE(excluded.image_box_art, game_metadata_cache.image_box_art),
+                image_box_art_checked_at = COALESCE(
+                    excluded.image_box_art_checked_at,
+                    game_metadata_cache.image_box_art_checked_at
+                ),
                 refreshed_at = excluded.refreshed_at
             """,
-            (metadata["game_id"], metadata["game_title"], metadata.get("console"), metadata.get("genre"),
-             datetime.now(timezone.utc).isoformat()),
+            (
+                metadata["game_id"], metadata["game_title"], metadata.get("console"),
+                metadata.get("genre"), metadata.get("image_box_art"),
+                image_box_art_checked_at, refreshed_at,
+            ),
         )
         conn.commit()
 

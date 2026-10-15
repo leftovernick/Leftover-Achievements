@@ -23,6 +23,14 @@
   }
   updateBackfillNotice();
 
+  document.querySelectorAll("[data-wrapped-link]").forEach((link) => {
+    link.addEventListener("keydown", (event) => {
+      if (event.key !== " ") return;
+      event.preventDefault();
+      link.click();
+    });
+  });
+
   const list = document.querySelector("[data-week-list]");
   const sentinel = document.querySelector("[data-week-sentinel]");
   const endMessage = document.querySelector("[data-week-list-end]");
@@ -46,7 +54,9 @@
       const data = await response.json();
       for (const week of data.items) {
         const link = document.createElement("a");
-        link.href = `/history?week=${encodeURIComponent(week.week_start)}`;
+        const params = new URLSearchParams({ week: week.week_start });
+        if (list.dataset.historyUser) params.set("user", list.dataset.historyUser);
+        link.href = `/history?${params.toString()}`;
         link.textContent = week.label;
         if (week.week_start === list.dataset.selectedWeek) {
           link.className = "active";
