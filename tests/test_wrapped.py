@@ -252,9 +252,37 @@ class WrappedSummaryTests(unittest.TestCase):
         summary = WrappedService(db).generate_year("Player", 2026, self.now)
         self.assertEqual(summary.awards.mastered_games, 1)
         self.assertEqual(summary.awards.beaten_games_partial, 1)
+        self.assertEqual(summary.awards.observed_beaten_games, 1)
+        self.assertEqual(summary.awards.effective_beaten_games, 2)
+        self.assertEqual(summary.headline.effective_beaten_games, 2)
         self.assertEqual(summary.awards.mastery_reliability, "more_reliable")
         self.assertEqual(summary.awards.beaten_reliability, "partial_historical_coverage")
         self.assertIn("beaten_history_partial", summary.coverage.flags)
+
+    def test_effective_beaten_uses_unique_observed_and_mastered_game_ids(self):
+        db = FakeDatabase(
+            masteries=[
+                {"game_id": 2, "game_title": "Both", "game_image": None,
+                 "date": "2026-01-03T00:00:00+00:00"},
+                {"game_id": 3, "game_title": "Mastery only", "game_image": None,
+                 "date": "2026-01-04T00:00:00+00:00"},
+                {"game_id": 4, "game_title": "Another mastery", "game_image": None,
+                 "date": "2026-01-05T00:00:00+00:00"},
+            ],
+            beaten=[
+                {"game_id": 1, "game_title": "Beaten only", "game_image": None,
+                 "date": "2026-01-01T00:00:00+00:00"},
+                {"game_id": 2, "game_title": "Both", "game_image": None,
+                 "date": "2026-01-02T00:00:00+00:00"},
+            ],
+        )
+        summary = WrappedService(db).generate_year("Player", 2026, self.now)
+        self.assertEqual(summary.awards.observed_beaten_games, 2)
+        self.assertEqual(summary.awards.mastered_games, 3)
+        self.assertEqual(summary.awards.effective_beaten_games, 4)
+        self.assertEqual(summary.awards.mastery_only_beaten_games, 2)
+        self.assertEqual(summary.headline.observed_beaten_games, 2)
+        self.assertEqual(summary.headline.effective_beaten_games, 4)
 
     def test_first_activity_is_local_only_and_enrichment_slots_stay_empty(self):
         rows = complete_rows()

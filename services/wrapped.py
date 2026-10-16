@@ -100,7 +100,13 @@ class WrappedHeadline:
     games_with_progress: int = 0
     consoles_with_progress: int = 0
     mastered_games: int = 0
-    beaten_games_partial: int = 0
+    observed_beaten_games: int = 0
+    effective_beaten_games: int = 0
+
+    @property
+    def beaten_games_partial(self) -> int:
+        """Backward-compatible name for the observed-only historical total."""
+        return self.observed_beaten_games
 
 
 @dataclass
@@ -155,9 +161,16 @@ class WrappedAwards:
     mastered_games: int
     mastery_by_month: list[MonthMetric]
     mastery_reliability: Literal["more_reliable"]
-    beaten_games_partial: int
+    observed_beaten_games: int
+    effective_beaten_games: int
+    mastery_only_beaten_games: int
     beaten_by_month_partial: list[MonthMetric]
     beaten_reliability: Literal["partial_historical_coverage"]
+
+    @property
+    def beaten_games_partial(self) -> int:
+        """Backward-compatible name for the observed-only historical total."""
+        return self.observed_beaten_games
 
 
 @dataclass(frozen=True)
@@ -598,7 +611,8 @@ class WrappedService:
                 games_with_progress=len(games),
                 consoles_with_progress=consoles.total_consoles,
                 mastered_games=awards.mastered_games,
-                beaten_games_partial=awards.beaten_games_partial,
+                observed_beaten_games=awards.observed_beaten_games,
+                effective_beaten_games=awards.effective_beaten_games,
             ),
             activity=activity,
             games=game_summary,
@@ -878,11 +892,16 @@ class WrappedService:
         for award in beaten:
             target = award["awarded"].astimezone().date().replace(day=1).isoformat()
             beaten_counts[target] += 1
+        mastered_game_ids = {int(award["game_id"]) for award in masteries}
+        observed_beaten_game_ids = {int(award["game_id"]) for award in beaten}
+        effective_beaten_game_ids = observed_beaten_game_ids | mastered_game_ids
         return WrappedAwards(
-            mastered_games=len(masteries),
+            mastered_games=len(mastered_game_ids),
             mastery_by_month=[MonthMetric(month, mastery_counts[month]) for month in months],
             mastery_reliability="more_reliable",
-            beaten_games_partial=len(beaten),
+            observed_beaten_games=len(observed_beaten_game_ids),
+            effective_beaten_games=len(effective_beaten_game_ids),
+            mastery_only_beaten_games=len(mastered_game_ids - observed_beaten_game_ids),
             beaten_by_month_partial=[MonthMetric(month, beaten_counts[month]) for month in months],
             beaten_reliability="partial_historical_coverage",
         )

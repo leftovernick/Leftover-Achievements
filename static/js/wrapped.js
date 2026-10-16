@@ -10,6 +10,73 @@
 
   if (!story || cards.length === 0) return;
 
+  const desktopCanvas = { width: 1440, height: 810 };
+  const mobileCanvas = { width: 540, height: 960 };
+  let desktopMaximumScale;
+  const updateCanvasScale = () => {
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+
+    if (window.matchMedia("(max-width: 800px)").matches) {
+      document.documentElement.style.removeProperty("--wrapped-desktop-scale");
+      document.documentElement.style.removeProperty("--wrapped-desktop-rendered-height");
+      document.documentElement.style.removeProperty("--wrapped-desktop-page-height");
+      document.documentElement.style.removeProperty("--wrapped-desktop-center-y");
+      const scale = viewportWidth / mobileCanvas.width;
+      document.documentElement.style.setProperty("--wrapped-mobile-scale", scale.toFixed(4));
+      document.documentElement.style.setProperty(
+        "--wrapped-mobile-rendered-height",
+        `${(mobileCanvas.height * scale).toFixed(2)}px`,
+      );
+      return;
+    }
+    document.documentElement.style.removeProperty("--wrapped-mobile-scale");
+    document.documentElement.style.removeProperty("--wrapped-mobile-rendered-height");
+    const chromeBottom = Math.max(
+      document.querySelector(".wrapped-chrome")?.getBoundingClientRect().bottom || 0,
+      document.querySelector(".wrapped-progress")?.getBoundingClientRect().bottom || 0,
+    );
+    const bottomGap = 18;
+    if (desktopMaximumScale === undefined) {
+      const browserChromeHeight = Math.max(0, window.outerHeight - viewportHeight);
+      const maximumViewportHeight = Math.max(
+        viewportHeight,
+        (window.screen?.availHeight || window.outerHeight) - browserChromeHeight,
+      );
+      desktopMaximumScale = Math.min(
+        1,
+        Math.max(
+          0.1,
+          (maximumViewportHeight - chromeBottom - bottomGap) / desktopCanvas.height,
+        ),
+      );
+    }
+    const scale = Math.min(desktopMaximumScale, viewportWidth / desktopCanvas.width);
+    const renderedHeight = desktopCanvas.height * scale;
+    const pageHeight = Math.max(
+      viewportHeight,
+      chromeBottom + renderedHeight + bottomGap,
+    );
+    const centerY = chromeBottom
+      + (pageHeight - chromeBottom - bottomGap) / 2;
+    document.documentElement.style.setProperty("--wrapped-desktop-scale", scale.toFixed(4));
+    document.documentElement.style.setProperty(
+      "--wrapped-desktop-rendered-height",
+      `${renderedHeight.toFixed(2)}px`,
+    );
+    document.documentElement.style.setProperty(
+      "--wrapped-desktop-page-height",
+      `${pageHeight.toFixed(2)}px`,
+    );
+    document.documentElement.style.setProperty(
+      "--wrapped-desktop-center-y",
+      `${centerY.toFixed(2)}px`,
+    );
+  };
+
+  window.addEventListener("resize", updateCanvasScale, { passive: true });
+  window.visualViewport?.addEventListener("resize", updateCanvasScale, { passive: true });
+
   const recapHero = document.querySelector(".recap-layout .recap-art__hero");
   const classifyRecapCover = () => {
     if (!recapHero?.naturalWidth || !recapHero.naturalHeight) return;
@@ -240,4 +307,5 @@
   exportButtons.forEach((button) => button.addEventListener("click", () => exportRecap(button)));
 
   setActive(0);
+  updateCanvasScale();
 })();

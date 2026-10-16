@@ -23,6 +23,7 @@ def make_summary(
     consoles=None,
     genres=None,
     masteries=None,
+    beaten=None,
     day_values=None,
 ):
     rows = complete_rows()
@@ -45,7 +46,7 @@ def make_summary(
         for index, genre in enumerate(genres or ["Action"] * len(achievements))
         if genre is not None
     }
-    database = FakeDatabase(rows, metadata=metadata, masteries=masteries or [])
+    database = FakeDatabase(rows, metadata=metadata, masteries=masteries or [], beaten=beaten or [])
     return WrappedService(database).generate_year("Player", 2026, NOW), database
 
 
@@ -212,6 +213,32 @@ class WrappedStoryTests(unittest.TestCase):
         self.assertEqual(mastery.supporting_data["largest_cluster_size"], 4)
 
         self.assertNotIn("special_highlight", [item.type for item in self.selector.build_plan(summary).cards])
+
+    def test_final_recap_uses_effective_beaten_total(self):
+        summary, _ = make_summary(
+            [30, 20],
+            masteries=[
+                {"game_id": 2, "game_title": "Both", "game_image": None,
+                 "date": "2026-01-04T00:00:00+00:00"},
+                {"game_id": 3, "game_title": "Mastery only", "game_image": None,
+                 "date": "2026-01-05T00:00:00+00:00"},
+            ],
+            beaten=[
+                {"game_id": 1, "game_title": "Beaten only", "game_image": None,
+                 "date": "2026-01-03T00:00:00+00:00"},
+                {"game_id": 2, "game_title": "Both", "game_image": None,
+                 "date": "2026-01-03T00:00:00+00:00"},
+            ],
+        )
+        plan = self.selector.build_plan(summary)
+        recap = card(plan, "final_recap")
+        glance = card(plan, "year_at_a_glance")
+        self.assertEqual(recap.headline_data["beaten"], 3)
+        self.assertEqual(glance.headline_data["beaten"], 3)
+        self.assertEqual(recap.headline_data["active_days"], 1)
+        self.assertEqual(recap.headline_data["masteries"], 2)
+        self.assertEqual(recap.supporting_data["observed_beaten_games"], 2)
+        self.assertEqual(recap.supporting_data["mastery_only_beaten_games"], 1)
 
     def test_special_highlight_skips_duplicated_month_and_biggest_day(self):
         month_summary, _ = make_summary(

@@ -76,13 +76,14 @@
             {% elif card.type == "year_at_a_glance" %}
               <div class="glance-composition">
                 <div class="glance-heading">
-                  <span>One year in four numbers</span>
+                  <span>One year in five numbers</span>
                   <h2 id="story-title-{{ loop.index }}">The year,<br />at a glance.</h2>
                 </div>
                 <p class="glance-primary"><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
                 <div class="glance-secondary">
                   <p><strong>{{ card.headline_data.progress_games }}</strong><span>games</span></p>
                   <p><strong>{{ card.headline_data.consoles }}</strong><span>consoles</span></p>
+                  <p><strong>{{ card.headline_data.beaten }}</strong><span>beaten</span></p>
                   <p><strong>{{ card.headline_data.masteries }}</strong><span>masteries</span></p>
                 </div>
               </div>
@@ -296,15 +297,16 @@
                   <p><span>Wrapped for</span><strong>{{ summary.canonical_username }}</strong></p>
                 </div>
                 <div class="recap-stats">
-                  <p><strong>{{ "{:,}".format(card.headline_data.hardcore_achievements) }}</strong><span>achievements</span></p>
-                  <p><strong>{{ card.headline_data.progress_games }}</strong><span>games</span></p>
-                  <p><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
-                  <p><strong>{{ card.headline_data.masteries }}</strong><span>masteries</span></p>
+                  <p class="recap-stat"><strong>{{ "{:,}".format(card.headline_data.hardcore_achievements) }}</strong><span>achievements</span></p>
+                  <p class="recap-stat"><strong>{{ card.headline_data.progress_games }}</strong><span>games</span></p>
+                  <p class="recap-stat"><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
+                  <p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.beaten }}</strong><span>beaten</span></p>
+                  <p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.masteries }}</strong><span>masteries</span></p>
                   {% set hardcore_points_sign = "+" if card.headline_data.hardcore_points > 0 else "" %}
                   <p class="recap-points"><span>Hardcore Points <small>(RetroPoints)</small></span><strong>{{ hardcore_points_sign }}{{ "{:,}".format(card.headline_data.hardcore_points) }} <small>({{ "{:,}".format(card.headline_data.retro_points) }})</small></strong></p>
                 </div>
                 <dl class="recap-leaders">
-                  <div><dt>Game of the year</dt><dd>{{ card.headline_data.top_game.title }}</dd></div>
+                  <div><dt>Game of the year</dt><dd{% if card.headline_data.top_game.title|length > 36 %} class="recap-leader-value--long"{% endif %}>{{ card.headline_data.top_game.title }}</dd></div>
                   <div><dt>Top console</dt><dd>{{ card.headline_data.top_console }}</dd></div>
                   {% if card.headline_data.top_genre %}<div><dt>Top genre</dt><dd>{{ card.headline_data.top_genre }}</dd></div>{% endif %}
                 </dl>

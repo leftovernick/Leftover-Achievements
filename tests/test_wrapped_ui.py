@@ -180,6 +180,39 @@ class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Save for Stories", markup)
         self.assertIn("/static/vendor/html2canvas.min.js", markup)
 
+    async def test_final_recap_renders_all_five_headline_metrics(self):
+        _, _, summary, plan = prototype_samples()
+        recap = next(item for item in plan.cards if item.type == "final_recap")
+        recap.headline_data["beaten"] = 7
+        recap_markup = render(summary, plan).split('data-card-type="final_recap"', 1)[1]
+        for label in ("achievements", "games", "active days", "beaten", "masteries"):
+            self.assertIn(f"<span>{label}</span>", recap_markup)
+        self.assertEqual(recap_markup.count('<p class="recap-stat'), 5)
+        self.assertEqual(recap_markup.count('recap-stat--completion'), 2)
+
+    async def test_final_recap_marks_long_game_titles_for_compact_spacing(self):
+        _, _, summary, plan = prototype_samples()
+        recap = next(item for item in plan.cards if item.type == "final_recap")
+        recap.headline_data["top_game"]["title"] = "Pokémon Yellow Version: Special Pikachu Edition"
+        recap_markup = render(summary, plan).split('data-card-type="final_recap"', 1)[1]
+        self.assertIn(
+            '<dd class="recap-leader-value--long">Pokémon Yellow Version: Special Pikachu Edition</dd>',
+            recap_markup,
+        )
+
+    async def test_year_at_a_glance_renders_effective_beaten_with_existing_metrics(self):
+        _, _, summary, plan = prototype_samples()
+        glance = next(item for item in plan.cards if item.type == "year_at_a_glance")
+        glance.headline_data["beaten"] = 7
+        glance_markup = render(summary, plan).split('data-card-type="year_at_a_glance"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("One year in five numbers", glance_markup)
+        for value, label in ((glance.headline_data["active_days"], "active days"),
+                             (glance.headline_data["progress_games"], "games"),
+                             (glance.headline_data["consoles"], "consoles"),
+                             (7, "beaten"),
+                             (glance.headline_data["masteries"], "masteries")):
+            self.assertIn(f"<strong>{value}</strong><span>{label}</span>", glance_markup)
+
 
 if __name__ == "__main__":
     unittest.main()
