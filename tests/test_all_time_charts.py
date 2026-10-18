@@ -324,6 +324,14 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(days["2026-01-11"]["hardcore_points"], 10)
         self.assertEqual(days["2026-01-12"]["hardcore_points"], 20)
 
+        utc_days = daily_points(
+            achievements,
+            parse_date("2026-01-08T20:00:00Z"),
+            parse_date("2026-01-31T23:59:59Z"),
+            timezone.utc,
+        )
+        self.assertEqual(utc_days["2026-01-12"]["hardcore_points"], 30)
+
     def test_month_windows_do_not_overlap_and_handle_leap_year(self):
         ranges = list(month_ranges(parse_date("2024-01-31T23:59:59Z"), parse_date("2024-03-01T12:00:00Z")))
         self.assertEqual(ranges[1][2].date().isoformat(), "2024-02-29")

@@ -18,13 +18,21 @@ class LiveActivityRefreshTests(unittest.IsolatedAsyncioTestCase):
             95: {"game_id": 95, "image_box_art": None, "image_box_art_checked_at": None},
         }
         checked = {
-            95: {"game_id": 95, "image_box_art": None, "image_box_art_checked_at": "2026-01-01T00:00:00+00:00"},
+            95: {
+                "game_id": 95,
+                "image_icon": "https://example.test/game-icon.png",
+                "image_box_art": None,
+                "image_box_art_checked_at": "2026-01-01T00:00:00+00:00",
+            },
         }
         with (
             patch.object(application.db, "get_game_metadata", side_effect=[unchecked, checked]),
             patch.object(application.db, "save_game_metadata") as save,
             patch.object(application.ra_client, "game_summary", new=AsyncMock(return_value={
-                "game_id": 95, "game_title": "Game", "image_box_art": None,
+                "game_id": 95,
+                "game_title": "Game",
+                "image_icon": "https://example.test/game-icon.png",
+                "image_box_art": None,
             })) as summary,
         ):
             await application.refresh_game_metadata({95})

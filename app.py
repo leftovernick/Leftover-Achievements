@@ -9,7 +9,7 @@ import socket
 from contextvars import ContextVar
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urljoin
 from urllib.parse import urlencode, urlparse
 
@@ -35,7 +35,7 @@ from services.windows_notifications import WindowsNotificationService
 from services.retroachievements import RetroAchievements
 from services.updater import ApplicationUpdater, UpdateError
 from services.wrapped import WrappedService
-from services.wrapped_story import WrappedStorySelector
+from services.wrapped_story import WrappedStoryCard, WrappedStorySelector, special_highlight_presentation
 
 
 app = FastAPI(title="LeftoverAchievements Display")
@@ -967,13 +967,22 @@ def game_ids_needing_artwork(game_ids) -> set[int]:
         game_id for game_id in ids
         if game_id not in cached_metadata
         or not cached_metadata[game_id].get("image_box_art_checked_at")
+        or not cached_metadata[game_id].get("image_icon")
+        or (
+            "[subset" in (cached_metadata[game_id].get("game_title") or "").casefold()
+            and not cached_metadata[game_id].get("parent_game_id")
+        )
     }
 
 
 async def refresh_game_metadata(game_ids):
     for game_id in sorted(game_ids_needing_artwork(game_ids)):
         try:
-            db.save_game_metadata(await ra_client.game_summary(game_id))
+            metadata = await ra_client.game_summary(game_id)
+            db.save_game_metadata(metadata)
+            parent_game_id = metadata.get("parent_game_id")
+            if parent_game_id and game_ids_needing_artwork({parent_game_id}):
+                db.save_game_metadata(await ra_client.game_summary(parent_game_id))
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             logger.warning("Could not load all-time metadata for game %s: %s: %s", game_id, type(exc).__name__, exc)
 
@@ -1773,6 +1782,28 @@ def select_history_user(users: list[dict], requested: str | None) -> dict | None
     return users[0]
 
 
+WRAPPED_PREVIEW_YEAR = 2026
+
+
+def finalize_local_wrapped_preview(summary):
+    """Temporarily expose the current Wrapped as final in local development."""
+    if (
+        not runtime.is_packaged
+        and summary.wrapped_year == WRAPPED_PREVIEW_YEAR
+        and summary.status == "in_progress"
+    ):
+        summary.status = "final"
+        summary.coverage.flags = [
+            flag for flag in summary.coverage.flags
+            if flag != "period_in_progress"
+        ]
+        summary.coverage.notes = [
+            note for note in summary.coverage.notes
+            if note != "The current Wrapped period is not final until November 1."
+        ]
+    return summary
+
+
 def history_wrapped_context(user: dict | None) -> dict:
     """Build compact Wrapped availability without refreshing external data."""
     if user is None:
@@ -1781,6 +1812,7 @@ def history_wrapped_context(user: dict | None) -> dict:
         summaries = WrappedService(db).generate_for_user(user["ra_username"])
     except ValueError:
         return {"in_progress": None, "completed": []}
+    summaries = [finalize_local_wrapped_preview(summary) for summary in summaries]
 
     in_progress = next((summary for summary in reversed(summaries) if summary.status == "in_progress"), None)
     completed = []
@@ -1935,6 +1967,8 @@ def wrapped_user_year_context(username: str, wrapped_year: int) -> dict:
     selector = WrappedStorySelector()
     summaries = wrapped_service.generate_for_user(username)
     summary = next((item for item in summaries if item.wrapped_year == wrapped_year), None)
+    if summary is not None:
+        summary = finalize_local_wrapped_preview(summary)
     if (
         summary is None
         or summary.status != "final"
@@ -1960,10 +1994,376 @@ def wrapped_prototype_context(wrapped_year: int) -> dict:
     profiles, _ = db.get_all_time_chart_cache()
     for storage_username in profiles:
         try:
-            return wrapped_user_year_context(storage_username, wrapped_year)
-        except (HTTPException, ValueError):
+            wrapped_service = WrappedService(db)
+            summaries = wrapped_service.generate_for_user(storage_username)
+            summary = next((item for item in summaries if item.wrapped_year == wrapped_year), None)
+            if summary is None or not summary.coverage.complete:
+                continue
+            summary = finalize_local_wrapped_preview(summary)
+            previous = next((
+                item for item in reversed(summaries)
+                if item.wrapped_year < wrapped_year
+                and item.status == "final"
+                and item.coverage.complete
+                and item.headline.hardcore_achievements > 0
+            ), None)
+            plan = WrappedStorySelector().build_plan(
+                summary,
+                previous,
+            )
+            if plan is not None:
+                return {"summary": summary, "plan": plan}
+        except ValueError:
             continue
-    raise HTTPException(status_code=404, detail=f"No completed local Wrapped {wrapped_year} sample is available")
+    raise HTTPException(status_code=404, detail=f"No local Wrapped {wrapped_year} sample is available")
+
+
+SPECIAL_HIGHLIGHT_PREVIEWS = (
+    ("mastery_sprint", "Mastery sprint", {"largest_cluster_size": 6}),
+    ("extreme_month_dominance", "Month dominance", {"month": "2026-07-01", "share": 68.4}),
+    (
+        "extreme_single_game_dominance",
+        "Single-game dominance",
+        {"game": {"title": "Pokémon Rumble", "achievements": 184}, "share": 41.8},
+    ),
+    (
+        "huge_comeback",
+        "Huge comeback",
+        {
+            "days": 213,
+            "start_date": date(2026, 2, 2),
+            "end_date": date(2026, 9, 2),
+            "activity_before": date(2026, 2, 1),
+            "activity_after": date(2026, 9, 3),
+            "weekly_activity": [
+                {"week": 1, "start_date": date(2026, 9, 3), "end_date": date(2026, 9, 9), "achievements": 12, "active_days": 2, "relative_percent": 26.7, "is_peak": False},
+                {"week": 2, "start_date": date(2026, 9, 10), "end_date": date(2026, 9, 16), "achievements": 31, "active_days": 4, "relative_percent": 68.9, "is_peak": False},
+                {"week": 3, "start_date": date(2026, 9, 17), "end_date": date(2026, 9, 23), "achievements": 8, "active_days": 1, "relative_percent": 17.8, "is_peak": False},
+                {"week": 4, "start_date": date(2026, 9, 24), "end_date": date(2026, 9, 30), "achievements": 45, "active_days": 5, "relative_percent": 100.0, "is_peak": True},
+                {"week": 5, "start_date": date(2026, 10, 1), "end_date": date(2026, 10, 7), "achievements": 22, "active_days": 3, "relative_percent": 48.9, "is_peak": False},
+                {"week": 6, "start_date": date(2026, 10, 8), "end_date": date(2026, 10, 14), "achievements": 38, "active_days": 4, "relative_percent": 84.4, "is_peak": False},
+                {"week": 7, "start_date": date(2026, 10, 15), "end_date": date(2026, 10, 21), "achievements": 17, "active_days": 2, "relative_percent": 37.8, "is_peak": False},
+                {"week": 8, "start_date": date(2026, 10, 22), "end_date": date(2026, 10, 28), "achievements": 29, "active_days": 3, "relative_percent": 64.4, "is_peak": False},
+            ],
+        },
+    ),
+    (
+        "unusual_retropoint_day",
+        "RetroPoints multiplier",
+        {
+            "date": date(2026, 10, 10),
+            "hardcore_points": 23,
+            "retro_points": 517,
+            "ratio": 517 / 23,
+        },
+    ),
+)
+
+
+WRAPPED_SLIDE_RESULT_PREVIEWS = {
+    "game_of_the_year": (
+        ("dominant_all_metrics", "Won every metric"),
+        ("dominant_most_metrics", "Won most metrics"),
+        ("split_leaders", "Split leaders"),
+    ),
+    "game_focus": (
+        ("focused_year", "Focused year"),
+        ("mixed_year", "Mixed year"),
+        ("broad_year", "Broad year"),
+    ),
+    "console": (
+        ("console_majority", "Console majority"),
+        ("console_dominant", "Console dominant"),
+        ("console_leader", "Console leader"),
+    ),
+    "genre": (
+        ("genre_obsession", "Genre obsession"),
+        ("genre_dominant", "Genre dominant"),
+        ("genre_preference", "Genre preference"),
+        ("genre_varied", "Varied genres"),
+    ),
+    "monthly_pattern": (
+        ("dominant_month", "Dominant month"),
+        ("strong_month", "Strong month"),
+        ("steady_year", "Steady year"),
+        ("active_most_year", "Active most of the year"),
+        ("seasonal_year", "Seasonal year"),
+        ("burst_year", "Burst year"),
+    ),
+    "biggest_day": (
+        ("huge_day", "Huge day"),
+        ("big_day", "Big day"),
+        ("active_day", "Active day"),
+    ),
+    "activity_pattern": (
+        ("strong_streak", "Strong streak"),
+        ("notable_streak", "Notable streak"),
+        ("major_comeback", "Major comeback"),
+        ("notable_comeback", "Notable comeback"),
+        ("strong_weekday_pattern", "Strong weekday pattern"),
+        ("weekday_fallback", "Weekday fallback"),
+    ),
+    "mastery": (
+        ("mastery_sprint", "Mastery sprint"),
+        ("mastery_cluster", "Mastery cluster"),
+        ("mastery_year", "Mastery year"),
+        ("many_masteries", "Many masteries"),
+        ("few_masteries", "Few masteries"),
+        ("single_mastery", "Single mastery"),
+    ),
+    "special_highlight": tuple(
+        (variant, label) for variant, label, _ in SPECIAL_HIGHLIGHT_PREVIEWS
+    ),
+    "year_over_year": (
+        ("mixed_year_over_year", "Mixed year over year"),
+        ("big_growth", "Big growth"),
+        ("moderate_growth", "Moderate growth"),
+        ("similar_year", "Similar year"),
+        ("quieter_year", "Quieter year"),
+    ),
+}
+
+
+def apply_special_highlight_preview(context: dict, variant: str | None) -> None:
+    """Expose every supported special card in the local development preview."""
+    context["special_highlight_previews"] = [
+        {"variant": preview_variant, "label": label}
+        for preview_variant, label, _ in SPECIAL_HIGHLIGHT_PREVIEWS
+    ]
+    context["selected_special_highlight"] = variant
+    if variant is None:
+        return
+
+    preview = next((item for item in SPECIAL_HIGHLIGHT_PREVIEWS if item[0] == variant), None)
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Special highlight preview is not available")
+    _, _, preview_data = preview
+    headline_data = dict(preview_data)
+    plan = context["plan"]
+    summary = context["summary"]
+    if variant == "mastery_sprint":
+        sources = list(summary.details.masteries[:6]) or list(summary.details.games[:6])
+        sprint_start = datetime(plan.wrapped_year, 7, 19, 9, tzinfo=timezone.utc)
+        masteries = []
+        for index, source in enumerate(sources):
+            masteries.append({
+                "awarded_at": sprint_start + timedelta(hours=index * 3),
+                "game_id": source.game_id,
+                "game_title": getattr(source, "game_title", getattr(source, "title", "Game")),
+                "image": source.image,
+            })
+        headline_data.update({
+            "largest_cluster_size": len(masteries),
+            "start_date": masteries[0]["awarded_at"] if masteries else sprint_start,
+            "end_date": masteries[-1]["awarded_at"] if masteries else sprint_start,
+            "masteries": masteries,
+        })
+    elif variant == "extreme_month_dominance":
+        headline_data["month"] = f"{plan.wrapped_year}-07-01"
+    elif variant == "extreme_single_game_dominance" and summary.details.games:
+        game = max(summary.details.games, key=lambda item: item.achievements)
+        headline_data["game"] = {
+            "title": game.title,
+            "image": game.image,
+            "achievements": game.achievements,
+        }
+    elif variant == "huge_comeback":
+        for key in ("start_date", "end_date", "activity_before", "activity_after"):
+            headline_data[key] = headline_data[key].replace(year=plan.wrapped_year)
+        headline_data["weekly_activity"] = [
+            {
+                **week,
+                "start_date": week["start_date"].replace(year=plan.wrapped_year),
+                "end_date": week["end_date"].replace(year=plan.wrapped_year),
+            }
+            for week in headline_data["weekly_activity"]
+        ]
+    elif variant == "unusual_retropoint_day":
+        headline_data["date"] = headline_data["date"].replace(year=plan.wrapped_year)
+    special_card = next((card for card in plan.cards if card.type == "special_highlight"), None)
+    if special_card is None:
+        insert_at = next(
+            (index for index, card in enumerate(plan.cards) if card.type in {"year_over_year", "final_recap"}),
+            len(plan.cards),
+        )
+        special_card = WrappedStoryCard(
+            id="special-highlight-preview",
+            type="special_highlight",
+            variant=variant,
+            order=insert_at + 1,
+            required=False,
+            status=plan.status,
+        )
+        plan.cards.insert(insert_at, special_card)
+        for index, card in enumerate(plan.cards, start=1):
+            card.order = index
+
+    special_card.variant = variant
+    special_card.headline_data = headline_data
+    special_card.supporting_data = {
+        "presentation": special_highlight_presentation(variant, headline_data),
+        "preview": True,
+    }
+    special_card.reason_selected = "Development-only special highlight preview."
+    context["initial_card_type"] = "special_highlight"
+
+
+def _slide_result_groups(plan) -> list[dict]:
+    """Build the grouped developer control from the slides in this story."""
+    groups = []
+    for index, card in enumerate(plan.cards, start=1):
+        alternatives = WRAPPED_SLIDE_RESULT_PREVIEWS.get(card.type, ())
+        options = [{
+            "variant": "",
+            "label": f"Actual selection · {card.variant.replace('_', ' ')}",
+        }]
+        options.extend(
+            {"variant": variant, "label": label}
+            for variant, label in alternatives
+        )
+        groups.append({
+            "type": card.type,
+            "label": f"{index:02d} · {card.type.replace('_', ' ')}",
+            "options": options,
+        })
+    return groups
+
+
+def _preview_year_over_year(card: WrappedStoryCard, variant: str) -> None:
+    percentages = {
+        "big_growth": (80.0, 62.0, 45.0, 70.0),
+        "moderate_growth": (28.0, 21.0, 18.0, 20.0),
+        "similar_year": (3.0, -2.0, 1.0, 0.0),
+        "mixed_year_over_year": (-18.0, 22.0, -12.0, 15.0),
+        "quieter_year": (-31.0, -26.0, -22.0, -20.0),
+    }[variant]
+    changes = card.supporting_data.get("changes", {})
+    for key, percent in zip(
+        ("hardcore_achievements", "retro_points", "active_days", "progress_games"),
+        percentages,
+    ):
+        previous = max(1, int(changes.get(key, {}).get("previous", 100)))
+        current = max(0, round(previous * (1 + percent / 100)))
+        changes[key] = {
+            "previous": previous,
+            "current": current,
+            "raw_change": current - previous,
+            "percent_change": percent,
+        }
+    card.supporting_data["changes"] = changes
+    card.headline_data["achievement_change_percent"] = percentages[0]
+
+
+def _preview_activity_pattern(card: WrappedStoryCard, variant: str, wrapped_year: int) -> None:
+    if "streak" in variant:
+        days = 45 if variant == "strong_streak" else 9
+        start = date(wrapped_year, 6, 1)
+        card.headline_data = {
+            "start_date": start,
+            "end_date": start + timedelta(days=days - 1),
+            "days": days,
+        }
+        card.supporting_data["streak_achievements"] = days * 7
+        return
+    if "comeback" in variant:
+        days = 126 if variant == "major_comeback" else 44
+        activity_after = date(wrapped_year, 9, 3)
+        card.headline_data = {
+            "days": days,
+            "activity_before": activity_after - timedelta(days=days + 1),
+            "activity_after": activity_after,
+        }
+        return
+
+    weekday = "Saturday" if variant == "strong_weekday_pattern" else "Tuesday"
+    share = 32.5 if variant == "strong_weekday_pattern" else 17.4
+    achievements = 260 if variant == "strong_weekday_pattern" else 139
+    card.headline_data = {
+        "weekday": weekday,
+        "share": share,
+        "achievements": achievements,
+        "active_days": 31,
+    }
+    weekday_names = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    card.supporting_data["weekday_breakdown"] = [
+        {
+            "weekday": name,
+            "short_label": name[:3],
+            "achievements": achievements if name == weekday else max(35, achievements // (3 if share > 20 else 1)),
+            "active_days": 31 if name == weekday else 18,
+            "share": share if name == weekday else (100 - share) / 6,
+            "relative_percent": 100.0 if name == weekday else (42.0 if share > 20 else 83.0),
+        }
+        for name in weekday_names
+    ]
+
+
+def apply_wrapped_slide_result_preview(
+    context: dict,
+    slide: str | None,
+    variant: str | None,
+) -> None:
+    """Override one slide's selected result with coherent development data."""
+    plan = context["plan"]
+    context["slide_result_previews"] = _slide_result_groups(plan)
+    context["selected_slide_result"] = f"{slide}|{variant or ''}" if slide else ""
+    context["selected_slide_type"] = slide or ""
+    context["selected_slide_variant"] = variant or ""
+    if slide is None:
+        return
+
+    if slide == "special_highlight" and variant:
+        allowed = dict(WRAPPED_SLIDE_RESULT_PREVIEWS[slide])
+        if variant not in allowed:
+            raise HTTPException(status_code=404, detail="Wrapped slide result is not available")
+        apply_special_highlight_preview(context, variant)
+        context["slide_result_previews"] = _slide_result_groups(plan)
+        return
+
+    card = next((item for item in plan.cards if item.type == slide), None)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Wrapped slide preview is not available")
+    context["initial_card_type"] = slide
+    if not variant:
+        return
+
+    allowed = dict(WRAPPED_SLIDE_RESULT_PREVIEWS.get(slide, ()))
+    if variant not in allowed:
+        raise HTTPException(status_code=404, detail="Wrapped slide result is not available")
+    card.variant = variant
+    if slide == "game_focus":
+        shares = {
+            "focused_year": (34.0, 58.0, 72.0, 82.0),
+            "mixed_year": (14.0, 33.0, 45.0, 63.0),
+            "broad_year": (7.0, 17.0, 26.0, 44.0),
+        }[variant]
+        card.headline_data.update(dict(zip(
+            ("top_1_share", "top_3_share", "top_5_share", "top_10_share"),
+            shares,
+        )))
+    elif slide == "console":
+        card.headline_data["achievement_share"] = {
+            "console_majority": 58.0,
+            "console_dominant": 43.0,
+            "console_leader": 29.0,
+        }[variant]
+    elif slide == "genre":
+        card.headline_data["share"] = {
+            "genre_obsession": 48.0,
+            "genre_dominant": 36.0,
+            "genre_preference": 25.0,
+            "genre_varied": 14.0,
+        }[variant]
+    elif slide == "biggest_day":
+        card.headline_data["achievements"] = {
+            "huge_day": 104,
+            "big_day": 58,
+            "active_day": 24,
+        }[variant]
+    elif slide == "activity_pattern":
+        _preview_activity_pattern(card, variant, plan.wrapped_year)
+    elif slide == "year_over_year":
+        _preview_year_over_year(card, variant)
 
 
 def wrapped_page_response(
@@ -2000,11 +2400,22 @@ async def history_wrapped(request: Request, year: int, user: str | None = None):
 
 
 @app.get("/dev/wrapped", include_in_schema=False)
-async def wrapped_prototype(request: Request, year: int = 2025):
+async def wrapped_prototype(
+    request: Request,
+    year: int = 2026,
+    slide: str | None = None,
+    variant: str | None = None,
+    special: str | None = None,
+):
     if runtime.is_packaged:
         raise HTTPException(status_code=404, detail="Not found")
     context = wrapped_prototype_context(year)
-    return wrapped_page_response(request, context, prototype_years=(2024, 2025))
+    # Keep old bookmarked special-preview URLs working while the developer
+    # toolbar moves all result choices into one control.
+    if special and not slide:
+        slide, variant = "special_highlight", special
+    apply_wrapped_slide_result_preview(context, slide, variant)
+    return wrapped_page_response(request, context, prototype_years=(2024, 2025, 2026))
 
 
 @app.get("/api/wrapped/image", include_in_schema=False)

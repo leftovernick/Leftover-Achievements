@@ -105,15 +105,19 @@ class RetroAchievements:
 
     async def game_summary(self, game_id: int) -> dict:
         """Return stable metadata and presentation artwork for a game."""
-        data = await self._get_json("API_GetGame.php", {"i": int(game_id)})
+        data = await self._get_json("API_GetGameExtended.php", {"i": int(game_id)})
         if not isinstance(data, dict):
             raise ValueError("Unexpected RetroAchievements API response")
+        image_icon = data.get("ImageIcon") or data.get("imageIcon")
         image_box_art = data.get("ImageBoxArt") or data.get("imageBoxArt")
+        parent_game_id = data.get("ParentGameID") or data.get("parentGameId")
         return {
             "game_id": int(game_id),
             "game_title": data.get("Title") or data.get("GameTitle") or data.get("title") or f"Game #{game_id}",
             "console": data.get("ConsoleName") or data.get("consoleName") or data.get("Console") or data.get("console"),
             "genre": data.get("Genre") or data.get("genre"),
+            "parent_game_id": int(parent_game_id) if parent_game_id else None,
+            "image_icon": urljoin(RA_BASE_URL, image_icon) if image_icon else None,
             "image_box_art": urljoin(RA_BASE_URL, image_box_art) if image_box_art else None,
         }
 

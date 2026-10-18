@@ -5,6 +5,7 @@
   const counter = document.querySelector("[data-current-card]");
   const previous = document.querySelector("[data-story-previous]");
   const next = document.querySelector("[data-story-next]");
+  const slideResultPreview = document.querySelector("[data-slide-result-preview]");
   const exportButtons = Array.from(document.querySelectorAll("[data-wrapped-export]"));
   const exportStatus = document.querySelector("[data-wrapped-export-status]");
 
@@ -102,6 +103,16 @@
       else segment.removeAttribute("aria-current");
     });
     if (counter) counter.textContent = String(activeIndex + 1);
+    if (slideResultPreview) {
+      const slideType = cards[activeIndex]?.dataset.cardType || "";
+      const selectedVariant = document.body.dataset.selectedSlideType === slideType
+        ? document.body.dataset.selectedSlideVariant || ""
+        : "";
+      const resultValue = `${slideType}|${selectedVariant}`;
+      if (Array.from(slideResultPreview.options).some((option) => option.value === resultValue)) {
+        slideResultPreview.value = resultValue;
+      }
+    }
     if (previous) previous.disabled = activeIndex === 0;
     if (next) next.disabled = activeIndex === cards.length - 1;
   };
@@ -114,6 +125,16 @@
   progress.forEach((segment, index) => segment.addEventListener("click", () => goTo(index)));
   previous?.addEventListener("click", () => goTo(activeIndex - 1));
   next?.addEventListener("click", () => goTo(activeIndex + 1));
+  slideResultPreview?.addEventListener("change", () => {
+    const [slide, variant = ""] = slideResultPreview.value.split("|");
+    const url = new URL(window.location.href);
+    url.searchParams.set("year", document.body.dataset.wrappedYear);
+    url.searchParams.set("slide", slide);
+    if (variant) url.searchParams.set("variant", variant);
+    else url.searchParams.delete("variant");
+    url.searchParams.delete("special");
+    window.location.assign(url);
+  });
 
   const observer = new IntersectionObserver((entries) => {
     const visible = entries
@@ -306,6 +327,17 @@
 
   exportButtons.forEach((button) => button.addEventListener("click", () => exportRecap(button)));
 
-  setActive(0);
   updateCanvasScale();
+  const initialCardType = document.body.dataset.initialCardType;
+  const initialCardIndex = initialCardType
+    ? cards.findIndex((card) => card.dataset.cardType === initialCardType)
+    : -1;
+  setActive(initialCardIndex >= 0 ? initialCardIndex : 0);
+  if (initialCardIndex >= 0) {
+    requestAnimationFrame(() => {
+      document.documentElement.style.scrollBehavior = "auto";
+      cards[initialCardIndex].scrollIntoView({ block: "start" });
+      requestAnimationFrame(() => document.documentElement.style.removeProperty("scroll-behavior"));
+    });
+  }
 })();

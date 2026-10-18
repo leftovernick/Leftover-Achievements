@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 from services.wrapped import StreakMetric, WrappedService
-from services.wrapped_story import WrappedStorySelector, WrappedStoryService
+from services.wrapped_story import WrappedStorySelector, WrappedStoryService, comeback_weekly_activity
 from tests.test_wrapped import FakeDatabase, complete_rows, day, game
 
 
@@ -78,6 +78,17 @@ class WrappedStoryTests(unittest.TestCase):
         self.assertTrue(focus.supporting_data["single_game_dominance"])
         self.assertTrue(focus.supporting_data["extreme_single_game_dominance"])
 
+        broad_days = [
+            (
+                date(2025, 11, 1) + timedelta(days=index),
+                [game(index + 1, f"Game {index + 1}", 1, 5, 10)],
+            )
+            for index in range(100)
+        ]
+        summary, _ = make_summary([1] * 100, day_values=broad_days)
+        plan = self.selector.build_plan(summary)
+        self.assertNotIn("broad_game_variety", [item.variant for item in plan.cards])
+
     def test_console_dominance_sweep_and_split_leaders(self):
         summary, _ = make_summary([60, 40], consoles=["A", "B"])
         console = card(self.selector.build_plan(summary), "console")
@@ -92,6 +103,22 @@ class WrappedStoryTests(unittest.TestCase):
         console = card(self.selector.build_plan(summary), "console")
         self.assertEqual(console.variant, "console_dominant")
         self.assertTrue(console.supporting_data["split_console_leaders"])
+        self.assertEqual(console.supporting_data["leader_groups"], [
+            {"console": "A", "metrics": ["achievements earned", "games played"]},
+            {"console": "B", "metrics": ["points"]},
+        ])
+
+        dates = (date(2025, 11, 5), date(2026, 2, 5), date(2026, 5, 5), date(2026, 8, 5))
+        dominant_console_days = [
+            (active_date, [game(index + 1, f"Game {index + 1}", 25, 125, 250, "A")])
+            for index, active_date in enumerate(dates)
+        ]
+        summary, _ = make_summary(
+            [25] * 4, consoles=["A"] * 4, genres=["Action", "RPG", "Puzzle", "Sports"],
+            day_values=dominant_console_days,
+        )
+        plan = self.selector.build_plan(summary)
+        self.assertNotIn("major_console_dominance", [item.variant for item in plan.cards])
 
     def test_genre_eligibility_boundary_and_variants(self):
         summary, _ = make_summary([10] * 10, genres=["Action"] * 7 + [None] * 3)
@@ -109,6 +136,33 @@ class WrappedStoryTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 summary, _ = make_summary([5] * 20, genres=labels)
                 self.assertEqual(card(self.selector.build_plan(summary), "genre").variant, expected)
+
+        spread_dates = (
+            date(2025, 11, 5), date(2025, 12, 5), date(2026, 1, 5), date(2026, 2, 5),
+            date(2026, 3, 5), date(2026, 4, 5), date(2026, 5, 5), date(2026, 6, 5),
+        )
+        day_values = [
+            (active_date, [game(index + 1, f"Game {index + 1}", 10, 50, 100)])
+            for index, active_date in enumerate(spread_dates)
+        ]
+        summary, _ = make_summary(
+            [10] * 8,
+            genres=["Action"] * 4 + ["RPG", "Puzzle", "Sports", "Adventure"],
+            day_values=day_values,
+        )
+        plan = self.selector.build_plan(summary)
+        self.assertNotIn("extreme_genre_dominance", [item.variant for item in plan.cards])
+
+        broad_dates = [date(2025, 11, 1) + timedelta(days=index * 15) for index in range(20)]
+        broad_days = [
+            (active_date, [game(index + 1, f"Game {index + 1}", 5, 25, 50)])
+            for index, active_date in enumerate(broad_dates)
+        ]
+        summary, _ = make_summary(
+            [5] * 20, genres=[f"Genre {index + 1}" for index in range(20)], day_values=broad_days,
+        )
+        plan = self.selector.build_plan(summary)
+        self.assertNotIn("very_broad_genre_year", [item.variant for item in plan.cards])
 
     def test_monthly_variants(self):
         def monthly(values):
@@ -142,6 +196,42 @@ class WrappedStoryTests(unittest.TestCase):
         summary.activity.longest_achievement_streak = StreakMetric(date(2026, 1, 5), date(2026, 1, 11), 7)
         summary.activity.longest_inactive_gap = StreakMetric(date(2026, 1, 12), date(2026, 1, 21), 10)
         self.assertEqual(card(self.selector.build_plan(summary), "activity_pattern").variant, "weekday_fallback")
+
+    def test_comeback_weekly_activity_uses_real_calendar_week_totals(self):
+        values = [
+            (date(2026, 6, 1), [game(1, "Game", 10, 50, 100)]),
+            (date(2026, 6, 3), [game(1, "Game", 5, 25, 50)]),
+            (date(2026, 6, 10), [game(1, "Game", 20, 100, 200)]),
+            (date(2026, 6, 20), [game(1, "Game", 7, 35, 70)]),
+        ]
+        summary, _ = make_summary([42], day_values=values)
+        weeks = comeback_weekly_activity(
+            summary.details.days, date(2026, 6, 1), date(2026, 6, 28), week_limit=4,
+        )
+
+        self.assertEqual([week["achievements"] for week in weeks], [15, 20, 7, 0])
+        self.assertEqual([week["active_days"] for week in weeks], [2, 1, 1, 0])
+        self.assertEqual([week["relative_percent"] for week in weeks], [75.0, 100.0, 35.0, 0.0])
+        self.assertEqual([week["is_peak"] for week in weeks], [False, True, False, False])
+
+    def test_huge_comeback_special_carries_real_post_return_weeks(self):
+        dates = (
+            date(2025, 11, 1), date(2026, 6, 1), date(2026, 6, 3), date(2026, 6, 10),
+            date(2026, 7, 1), date(2026, 7, 10), date(2026, 8, 1), date(2026, 8, 8),
+            date(2026, 9, 1), date(2026, 9, 8),
+        )
+        consoles = ["NES", "SNES", "Genesis", "PlayStation"]
+        values = [
+            (active_date, [game((index % 4) + 1, f"Game {(index % 4) + 1}", 10, 50, 100, consoles[index % 4])])
+            for index, active_date in enumerate(dates)
+        ]
+        summary, _ = make_summary([25] * 4, consoles=consoles, day_values=values)
+        special = card(self.selector.build_plan(summary), "special_highlight")
+
+        self.assertEqual(special.variant, "huge_comeback")
+        self.assertEqual(special.headline_data["activity_after"], date(2026, 6, 1))
+        self.assertEqual(special.headline_data["weekly_activity"][0]["achievements"], 20)
+        self.assertEqual(special.headline_data["weekly_activity"][0]["active_days"], 2)
 
     def test_only_internal_inactive_gaps_qualify_as_comebacks(self):
         def activity_summary(dates):
@@ -181,7 +271,7 @@ class WrappedStoryTests(unittest.TestCase):
         self.assertEqual(activity.variant, "notable_streak")
         self.assertEqual(activity.headline_data["days"], 15)
 
-    def test_2025_regression_shape_keeps_streak_and_unique_special(self):
+    def test_2025_regression_shape_keeps_streak_and_selects_top_qualifier(self):
         values = [
             (date(2026, 1, 6) + timedelta(days=index), [game(1, "Game", 1, 5, 10)])
             for index in range(60)
@@ -197,7 +287,8 @@ class WrappedStoryTests(unittest.TestCase):
         plan = self.selector.build_plan(summary)
         self.assertEqual(card(plan, "activity_pattern").variant, "strong_streak")
         self.assertEqual(card(plan, "mastery").variant, "mastery_sprint")
-        self.assertEqual(card(plan, "special_highlight").variant, "unusual_retropoint_day")
+        self.assertEqual(card(plan, "special_highlight").variant, "mastery_sprint")
+        self.assertNotIn("huge_streak", [item.variant for item in plan.cards])
 
     def test_mastery_cluster_detection(self):
         base = datetime(2026, 1, 5, 12, tzinfo=timezone.utc)
@@ -212,7 +303,12 @@ class WrappedStoryTests(unittest.TestCase):
         self.assertEqual(mastery.supporting_data["cluster_count"], 1)
         self.assertEqual(mastery.supporting_data["largest_cluster_size"], 4)
 
-        self.assertNotIn("special_highlight", [item.type for item in self.selector.build_plan(summary).cards])
+        special = card(self.selector.build_plan(summary), "special_highlight")
+        self.assertEqual(special.variant, "mastery_sprint")
+        self.assertEqual(len(special.headline_data["masteries"]), 4)
+        self.assertEqual(special.headline_data["start_date"], base)
+        self.assertEqual(special.headline_data["end_date"], base + timedelta(hours=3))
+        self.assertEqual(special.supporting_data["presentation"]["date_label"], "Jan 5, 2026")
 
     def test_final_recap_uses_effective_beaten_total(self):
         summary, _ = make_summary(
@@ -240,7 +336,7 @@ class WrappedStoryTests(unittest.TestCase):
         self.assertEqual(recap.supporting_data["observed_beaten_games"], 2)
         self.assertEqual(recap.supporting_data["mastery_only_beaten_games"], 1)
 
-    def test_special_highlight_skips_duplicated_month_and_biggest_day(self):
+    def test_special_highlight_can_repeat_a_non_biggest_day_fact_when_it_is_most_impressive(self):
         month_summary, _ = make_summary(
             [100],
             day_values=[
@@ -250,24 +346,27 @@ class WrappedStoryTests(unittest.TestCase):
         )
         month_plan = self.selector.build_plan(month_summary)
         self.assertEqual(card(month_plan, "monthly_pattern").variant, "dominant_month")
-        self.assertNotIn("extreme_month_dominance", [item.variant for item in month_plan.cards])
+        self.assertEqual(card(month_plan, "special_highlight").variant, "extreme_month_dominance")
 
         day_summary, _ = make_summary([120])
         day_plan = self.selector.build_plan(day_summary)
         self.assertEqual(card(day_plan, "biggest_day").variant, "huge_day")
-        self.assertNotIn("massive_single_day", [item.variant for item in day_plan.cards])
+        special = card(day_plan, "special_highlight")
+        self.assertEqual(special.variant, "extreme_month_dominance")
+        self.assertNotEqual(special.variant, "massive_single_day")
 
-    def test_special_highlight_falls_through_to_unique_candidate(self):
+    def test_special_highlight_uses_impressiveness_order_not_uniqueness(self):
         summary, _ = make_summary([120])
         original = summary.details.days[0]
         summary.details.days[0] = replace(original, hardcore_points=100, retro_points=500)
         special = card(self.selector.build_plan(summary), "special_highlight")
-        self.assertEqual(special.variant, "unusual_retropoint_day")
+        self.assertEqual(special.variant, "extreme_month_dominance")
+        self.assertEqual(special.supporting_data["impressiveness_rank"], 3)
 
-    def test_special_highlight_is_omitted_when_all_candidates_duplicate(self):
+    def test_special_highlight_is_present_even_when_fact_appears_elsewhere(self):
         summary, _ = make_summary([120])
         plan = self.selector.build_plan(summary)
-        self.assertNotIn("special_highlight", [item.type for item in plan.cards])
+        self.assertEqual(card(plan, "special_highlight").variant, "extreme_month_dominance")
 
     def test_zero_activity_exclusion_and_in_progress_opt_in(self):
         empty_db = FakeDatabase(complete_rows())

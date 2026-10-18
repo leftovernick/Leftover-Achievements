@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
+import re
 from typing import Literal
 
 
@@ -11,8 +12,16 @@ RA_LAUNCH_DATE = date(2011, 11, 1)
 EARLIEST_WRAPPED_YEAR = 2012
 CURRENT_CACHE_FRESHNESS = timedelta(hours=1)
 WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+SUBSET_TITLE_SUFFIX = re.compile(r"\s*\[Subset(?:\s*-\s*[^\]]*)?\]\s*$", re.IGNORECASE)
+NON_CONSOLE_PLATFORMS = frozenset({"events"})
 
 WrappedStatus = Literal["in_progress", "final"]
+
+
+def wrapped_game_title(title: str) -> str:
+    """Present a subset as the main game it belongs to."""
+    normalized = SUBSET_TITLE_SUFFIX.sub("", title).strip()
+    return normalized or title
 
 
 @dataclass(frozen=True)
@@ -282,30 +291,30 @@ class WrappedSummary:
     details: WrappedDetails
 
 
-def _local_date(value: date | datetime | None = None) -> date:
+def _utc_date(value: date | datetime | None = None) -> date:
     if value is None:
-        return datetime.now().astimezone().date()
+        return datetime.now(timezone.utc).date()
     if isinstance(value, datetime):
-        return value.astimezone().date() if value.tzinfo else value.date()
+        return value.replace(tzinfo=timezone.utc).date() if value.tzinfo is None else value.astimezone(timezone.utc).date()
     return value
 
 
 def get_wrapped_year_for_date(value: date | datetime) -> int:
-    local_day = _local_date(value)
-    if local_day < RA_LAUNCH_DATE:
+    utc_day = _utc_date(value)
+    if utc_day < RA_LAUNCH_DATE:
         raise ValueError("RetroAchievements Wrapped begins on November 1, 2011")
-    return local_day.year + 1 if (local_day.month, local_day.day) >= (11, 1) else local_day.year
+    return utc_day.year + 1 if (utc_day.month, utc_day.day) >= (11, 1) else utc_day.year
 
 
 def get_current_wrapped_year(on_date: date | datetime | None = None) -> int:
-    return get_wrapped_year_for_date(_local_date(on_date))
+    return get_wrapped_year_for_date(_utc_date(on_date))
 
 
 def get_wrapped_status(wrapped_year: int, on_date: date | datetime | None = None) -> WrappedStatus:
     if wrapped_year < EARLIEST_WRAPPED_YEAR:
         raise ValueError(f"Wrapped year must be {EARLIEST_WRAPPED_YEAR} or later")
     end_date = date(wrapped_year, 10, 31)
-    return "final" if _local_date(on_date) > end_date else "in_progress"
+    return "final" if _utc_date(on_date) > end_date else "in_progress"
 
 
 def get_wrapped_period(wrapped_year: int, on_date: date | datetime | None = None) -> WrappedPeriod:
@@ -323,8 +332,8 @@ def list_available_wrapped_years(
     member_since: date | datetime,
     on_date: date | datetime | None = None,
 ) -> list[int]:
-    current_day = _local_date(on_date)
-    member_day = max(_local_date(member_since), RA_LAUNCH_DATE)
+    current_day = _utc_date(on_date)
+    member_day = max(_utc_date(member_since), RA_LAUNCH_DATE)
     if member_day > current_day:
         return []
     first_year = get_wrapped_year_for_date(member_day)
@@ -354,14 +363,14 @@ def _month_keys(period: WrappedPeriod) -> list[str]:
     return keys
 
 
-def _local_midnight(day: date) -> datetime:
-    return datetime.combine(day, time.min).astimezone()
+def _utc_midnight(day: date) -> datetime:
+    return datetime.combine(day, time.min, tzinfo=timezone.utc)
 
 
 def _required_interval(period: WrappedPeriod, member_since: datetime, now: datetime) -> tuple[datetime, datetime] | None:
-    start = max(_local_midnight(period.start_date), member_since.astimezone())
-    period_end = _local_midnight(period.end_date + timedelta(days=1)) - timedelta(seconds=1)
-    end = min(period_end, now.astimezone())
+    start = max(_utc_midnight(period.start_date), member_since.astimezone(timezone.utc))
+    period_end = _utc_midnight(period.end_date + timedelta(days=1)) - timedelta(seconds=1)
+    end = min(period_end, now.astimezone(timezone.utc))
     return (start, end) if start <= end else None
 
 
@@ -416,15 +425,15 @@ def _coverage_for_period(
         gaps.append((cursor, effective_required_end))
 
     missing_ranges = [
-        DateRange(start.astimezone().date(), end.astimezone().date())
+        DateRange(start.astimezone(timezone.utc).date(), end.astimezone(timezone.utc).date())
         for start, end in gaps
     ]
     if missing_ranges:
         flags.append("history_incomplete")
-        notes.append("One or more local-history ranges are not present in the monthly cache.")
+        notes.append("One or more account-history ranges are not present in the monthly cache.")
 
-    covered_from = merged[0][0].astimezone().date() if merged else None
-    covered_through = merged[-1][1].astimezone().date() if merged else None
+    covered_from = merged[0][0].astimezone(timezone.utc).date() if merged else None
+    covered_through = merged[-1][1].astimezone(timezone.utc).date() if merged else None
     return WrappedCoverage(
         complete=not missing_ranges,
         covered_from=covered_from,
@@ -505,10 +514,10 @@ def _top_console(values: dict[str, int], first_dates: dict[str, date]) -> Consol
 
 
 def _award_games(awards: list[dict], period: WrappedPeriod, now: datetime) -> list[dict]:
-    end_date = min(period.end_date, now.astimezone().date())
+    end_date = min(period.end_date, now.astimezone(timezone.utc).date())
     by_game = {}
     for award in awards:
-        awarded = _parse_datetime(award["date"]).astimezone()
+        awarded = _parse_datetime(award["date"]).astimezone(timezone.utc)
         if not period.start_date <= awarded.date() <= end_date:
             continue
         existing = by_game.get(award["game_id"])
@@ -522,6 +531,65 @@ def _genre_labels(metadata: dict | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(labels))
 
 
+def _canonical_game_id(game_id: int, metadata: dict[int, dict]) -> int:
+    return int((metadata.get(game_id) or {}).get("parent_game_id") or game_id)
+
+
+def _canonical_game_values(game: dict, metadata: dict[int, dict]) -> dict:
+    source_id = int(game["game_id"])
+    canonical_id = _canonical_game_id(source_id, metadata)
+    source_metadata = metadata.get(source_id, {})
+    canonical_metadata = metadata.get(canonical_id, {})
+    canonical_title = (
+        canonical_metadata.get("game_title")
+        or wrapped_game_title(source_metadata.get("game_title") or game["game_title"])
+    )
+    canonical_image = (
+        canonical_metadata.get("image_icon")
+        or canonical_metadata.get("image_box_art")
+        or game.get("game_image")
+    )
+    return {
+        "game_id": canonical_id,
+        "game_title": canonical_title,
+        "game_image": canonical_image,
+        "console": canonical_metadata.get("console") or game.get("console") or source_metadata.get("console"),
+    }
+
+
+def _canonicalize_days(days: dict[date, dict], metadata: dict[int, dict]) -> dict[date, dict]:
+    for values in days.values():
+        canonical_games = {}
+        for game in values["games"].values():
+            canonical = _canonical_game_values(game, metadata)
+            target = canonical_games.setdefault(canonical["game_id"], {
+                **canonical,
+                "achievements_earned": 0,
+                "hardcore_points": 0,
+                "retro_points": 0,
+            })
+            for field_name in ("achievements_earned", "hardcore_points", "retro_points"):
+                target[field_name] += int(game.get(field_name) or 0)
+        values["games"] = canonical_games
+    return days
+
+
+def _canonicalize_awards(awards: list[dict], metadata: dict[int, dict]) -> list[dict]:
+    canonical_awards = {}
+    for award in awards:
+        canonical = _canonical_game_values({
+            "game_id": award["game_id"],
+            "game_title": award["game_title"],
+            "game_image": award.get("game_image"),
+            "console": award.get("console"),
+        }, metadata)
+        normalized = {**award, **canonical}
+        existing = canonical_awards.get(canonical["game_id"])
+        if existing is None or normalized["awarded"] < existing["awarded"]:
+            canonical_awards[canonical["game_id"]] = normalized
+    return list(canonical_awards.values())
+
+
 class WrappedService:
     """Build Wrapped summaries without performing RetroAchievements API calls."""
 
@@ -529,7 +597,7 @@ class WrappedService:
         self.db = database
 
     def generate_for_user(self, username: str, now: datetime | None = None) -> list[WrappedSummary]:
-        now = (now or datetime.now().astimezone()).astimezone()
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         profile, rows, storage_username = self._user_cache(username)
         member_since = _parse_datetime(profile["member_since"])
         return [self.generate_year(storage_username, year, now, profile, rows)
@@ -543,7 +611,7 @@ class WrappedService:
         profile: dict | None = None,
         rows: dict[str, dict] | None = None,
     ) -> WrappedSummary:
-        now = (now or datetime.now().astimezone()).astimezone()
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         if profile is None or rows is None:
             profile, rows, username = self._user_cache(username)
         member_since = _parse_datetime(profile["member_since"])
@@ -552,18 +620,33 @@ class WrappedService:
             raise ValueError("Wrapped year does not overlap this account's lifetime")
 
         coverage = _coverage_for_period(period, member_since, rows, now)
+        if any(row.get("days") is not None and row.get("utc_days") is None for row in rows.values()):
+            coverage.flags.append("utc_history_pending")
+            coverage.notes.append("Wrapped UTC history is being rebuilt from RetroAchievements data.")
         days = self._period_days(rows, period, now)
-        games = self._aggregate_games(days)
+        raw_games = self._aggregate_games(days)
 
         required = _required_interval(period, member_since, now)
         award_end = required[1] if required else now
         masteries = _award_games(self.db.get_recorded_chart_masteries([username], award_end).get(username.lower(), []), period, now)
         beaten = _award_games(self.db.get_recorded_chart_beaten_games([username], award_end).get(username.lower(), []), period, now)
         award_game_ids = {int(award["game_id"]) for award in masteries + beaten}
-        metadata = self.db.get_game_metadata(set(games) | award_game_ids)
+        metadata = self.db.get_game_metadata(set(raw_games) | award_game_ids)
+        parent_game_ids = {
+            int(details["parent_game_id"])
+            for details in metadata.values()
+            if details.get("parent_game_id")
+        }
+        if parent_game_ids:
+            metadata.update(self.db.get_game_metadata(parent_game_ids))
+        days = _canonicalize_days(days, metadata)
+        masteries = _canonicalize_awards(masteries, metadata)
+        beaten = _canonicalize_awards(beaten, metadata)
+        games = self._aggregate_games(days)
         for game_id, game in games.items():
             details = metadata.get(game_id, {})
             game["game_title"] = details.get("game_title") or game["game_title"]
+            game["game_image"] = details.get("image_icon") or details.get("image_box_art") or game.get("game_image")
             game["console"] = game.get("console") or details.get("console")
 
         activity = self._activity(days, period, member_since, now)
@@ -646,11 +729,15 @@ class WrappedService:
 
     @staticmethod
     def _period_days(rows: dict[str, dict], period: WrappedPeriod, now: datetime) -> dict[date, dict]:
-        end_date = min(period.end_date, now.astimezone().date())
+        end_date = min(period.end_date, now.astimezone(timezone.utc).date())
         combined = {}
-        # Scan every cached UTC partition and filter by authoritative local day key.
+        # Wrapped follows RetroAchievements' UTC clock. Older caches temporarily
+        # fall back to local days until their one-time UTC refresh completes.
         for row in rows.values():
-            for day_key, values in (row.get("days") or {}).items():
+            source_days = row.get("utc_days")
+            if source_days is None:
+                source_days = row.get("days") or {}
+            for day_key, values in source_days.items():
                 day = date.fromisoformat(day_key)
                 if not period.start_date <= day <= end_date:
                     continue
@@ -720,8 +807,8 @@ class WrappedService:
 
         active_dates = set(days)
         required = _required_interval(period, member_since, now)
-        streak = _longest_run(active_dates, True, required[0].astimezone().date(), required[1].astimezone().date()) if required else None
-        gap = _longest_run(active_dates, False, required[0].astimezone().date(), required[1].astimezone().date()) if required else None
+        streak = _longest_run(active_dates, True, required[0].astimezone(timezone.utc).date(), required[1].astimezone(timezone.utc).date()) if required else None
+        gap = _longest_run(active_dates, False, required[0].astimezone(timezone.utc).date(), required[1].astimezone(timezone.utc).date()) if required else None
         favorite = None
         if any(weekday_totals):
             weekday = min(range(7), key=lambda index: (-weekday_totals[index], index))
@@ -748,6 +835,8 @@ class WrappedService:
         first_dates = {}
         for game in games.values():
             console = (game.get("console") or "Unknown").strip() or "Unknown"
+            if console.casefold() in NON_CONSOLE_PLATFORMS:
+                continue
             first_dates[console] = min(first_dates.get(console, game["first_active_date"]), game["first_active_date"])
             game_counts[console] = game_counts.get(console, 0) + 1
             for field_name in totals:
@@ -829,9 +918,9 @@ class WrappedService:
                 active_game_ids=tuple(sorted(values["games"])),
             ))
         for award in masteries:
-            month_values[award["awarded"].astimezone().date().replace(day=1).isoformat()]["masteries"] += 1
+            month_values[award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()]["masteries"] += 1
         for award in beaten:
-            month_values[award["awarded"].astimezone().date().replace(day=1).isoformat()]["beaten"] += 1
+            month_values[award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()]["beaten"] += 1
 
         def award_detail(award: dict) -> WrappedAwardDetail:
             game_id = int(award["game_id"])
@@ -840,7 +929,9 @@ class WrappedService:
             return WrappedAwardDetail(
                 awarded_at=award["awarded"],
                 game_id=game_id,
-                game_title=game_metadata.get("game_title") or award["game_title"],
+                game_title=wrapped_game_title(
+                    game_metadata.get("game_title") or award["game_title"]
+                ),
                 image=award.get("game_image") or game.get("game_image"),
                 console=game.get("console") or game_metadata.get("console"),
                 genres=_genre_labels(game_metadata),
@@ -887,10 +978,10 @@ class WrappedService:
         mastery_counts = {month: 0 for month in months}
         beaten_counts = {month: 0 for month in months}
         for award in masteries:
-            target = award["awarded"].astimezone().date().replace(day=1).isoformat()
+            target = award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()
             mastery_counts[target] += 1
         for award in beaten:
-            target = award["awarded"].astimezone().date().replace(day=1).isoformat()
+            target = award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()
             beaten_counts[target] += 1
         mastered_game_ids = {int(award["game_id"]) for award in masteries}
         observed_beaten_game_ids = {int(award["game_id"]) for award in beaten}

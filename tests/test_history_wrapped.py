@@ -36,13 +36,13 @@ class HistoryWrappedTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('if (event.key !== " ") return;', history_script)
         self.assertIn("link.click();", history_script)
 
-    def test_availability_exposes_completed_omits_empty_and_keeps_current(self):
+    def test_availability_exposes_preview_as_completed_and_omits_empty(self):
         with patch.object(application.WrappedService, "generate_for_user", return_value=wrapped_summaries()):
             context = application.history_wrapped_context({"ra_username": "Player"})
-        self.assertEqual(context["in_progress"].wrapped_year, 2026)
+        self.assertIsNone(context["in_progress"])
         self.assertEqual(
             [entry["summary"].wrapped_year for entry in context["completed"]],
-            [2025, 2024],
+            [2026, 2025, 2024],
         )
 
     def test_selected_history_user_is_exact_and_does_not_fall_through(self):
@@ -77,14 +77,12 @@ class HistoryWrappedTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Completed Weeks", markup)
         self.assertIn("2026", markup)
-        self.assertIn("In progress", markup)
+        self.assertNotIn("In progress", markup)
         self.assertIn('<a class="history-wrapped-card history-wrapped-card--complete', markup)
+        self.assertIn('href="/history/wrapped/2026?user=Player" data-wrapped-link', markup)
         self.assertIn('href="/history/wrapped/2025?user=Player" data-wrapped-link', markup)
         self.assertIn('href="/history/wrapped/2024?user=Player" data-wrapped-link', markup)
         self.assertNotIn('/history/wrapped/2023', markup)
-        progress_markup = markup.split('history-wrapped-card--progress', 1)[1].split("</article>", 1)[0]
-        self.assertNotIn("href=", progress_markup)
-        self.assertNotIn("data-wrapped-link", progress_markup)
         self.assertIn("Game of the year", markup)
         self.assertIn("Top console", markup)
         self.assertIn("history-wrapped-card--theme-1", markup)

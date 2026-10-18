@@ -120,6 +120,11 @@ class WrappedPeriodTests(unittest.TestCase):
         self.assertFalse(period.is_complete)
         self.assertEqual(get_wrapped_status(2026, date(2026, 11, 1)), "final")
 
+    def test_datetime_boundaries_follow_utc_even_when_local_date_is_earlier(self):
+        utc_november = datetime(2026, 11, 1, 0, 30, tzinfo=timezone.utc)
+        self.assertEqual(get_wrapped_year_for_date(utc_november), 2027)
+        self.assertEqual(get_wrapped_status(2026, utc_november), "final")
+
     def test_current_year_and_available_years_are_deterministic(self):
         self.assertEqual(get_current_wrapped_year(date(2026, 10, 31)), 2026)
         self.assertEqual(get_current_wrapped_year(date(2026, 11, 1)), 2027)
@@ -144,12 +149,17 @@ class WrappedSummaryTests(unittest.TestCase):
         self.tz_patch.stop()
         time.tzset()
 
-    def test_period_filtering_uses_local_day_keys_across_all_partitions(self):
+    def test_period_filtering_uses_utc_day_keys_across_all_partitions(self):
         rows = complete_rows(start=date(2025, 10, 1), end=date(2026, 11, 1))
-        rows["2025-10-01"]["days"]["2025-10-31"] = day(9, 90, 180, [game(9, "Before", 9, 90, 180)])
-        rows["2025-11-01"]["days"]["2025-11-01"] = day(1, 5, 10, [game(1, "First", 1, 5, 10)])
-        rows["2026-11-01"]["days"]["2026-10-31"] = day(2, 10, 20, [game(2, "Last", 2, 10, 20)])
-        rows["2026-11-01"]["days"]["2026-11-01"] = day(8, 80, 160, [game(8, "After", 8, 80, 160)])
+        for row in rows.values():
+            row["utc_days"] = {}
+        rows["2025-10-01"]["utc_days"]["2025-10-31"] = day(9, 90, 180, [game(9, "Before", 9, 90, 180)])
+        rows["2025-11-01"]["utc_days"]["2025-11-01"] = day(1, 5, 10, [game(1, "First", 1, 5, 10)])
+        rows["2026-11-01"]["utc_days"]["2026-10-31"] = day(2, 10, 20, [game(2, "Last", 2, 10, 20)])
+        rows["2026-11-01"]["utc_days"]["2026-11-01"] = day(8, 80, 160, [game(8, "After", 8, 80, 160)])
+
+        # Local buckets can disagree near midnight; Wrapped must ignore them.
+        rows["2025-10-01"]["days"]["2025-11-01"] = day(20, 200, 400, [game(20, "Local only", 20, 200, 400)])
 
         summary = WrappedService(FakeDatabase(rows)).generate_year("Player", 2026, self.now)
 
@@ -158,15 +168,14 @@ class WrappedSummaryTests(unittest.TestCase):
         self.assertEqual(summary.highlights.first_activity.date, date(2025, 11, 1))
         self.assertEqual(summary.highlights.last_activity.date, date(2026, 10, 31))
 
-    def test_complete_coverage_requires_adjacent_utc_partition(self):
+    def test_complete_coverage_ends_at_utc_october_partition(self):
         rows = complete_rows()
         complete = WrappedService(FakeDatabase(rows)).generate_year("Player", 2026, self.now)
         self.assertTrue(complete.coverage.complete)
 
         del rows["2026-11-01"]
-        incomplete = WrappedService(FakeDatabase(rows)).generate_year("Player", 2026, self.now)
-        self.assertFalse(incomplete.coverage.complete)
-        self.assertTrue(incomplete.coverage.missing_ranges)
+        still_complete = WrappedService(FakeDatabase(rows)).generate_year("Player", 2026, self.now)
+        self.assertTrue(still_complete.coverage.complete)
 
     def test_missing_month_marks_history_incomplete(self):
         rows = complete_rows()
@@ -232,6 +241,57 @@ class WrappedSummaryTests(unittest.TestCase):
         self.assertEqual(genres.coverage_percent, 75.0)
         self.assertEqual(genres.unknown_achievement_share_percent, 25.0)
 
+    def test_subset_games_merge_into_their_parent_game_in_wrapped(self):
+        rows = complete_rows()
+        rows["2026-01-01"]["days"]["2026-01-05"] = day(
+            15,
+            75,
+            150,
+            [
+                game(34747, "Pokémon Rumble", 5, 25, 50, "Wii"),
+                game(38067, "Pokémon Rumble [Subset - Professor Oak Challenge]", 10, 50, 100, "Wii"),
+            ],
+        )
+        rows["2026-01-01"]["days"]["2026-01-06"] = day(
+            3,
+            15,
+            30,
+            [game(38067, "Pokémon Rumble [Subset - Professor Oak Challenge]", 3, 15, 30, "Wii")],
+        )
+        database = FakeDatabase(rows, metadata={
+            34747: {
+                "game_title": "Pokémon Rumble",
+                "console": "Wii",
+                "genre": "Beat 'em Up",
+                "image_icon": "https://example.test/pokemon-rumble-icon.png",
+                "image_box_art": "https://example.test/pokemon-rumble-cover.png",
+            },
+            38067: {
+                "game_title": "Pokémon Rumble [Subset - Professor Oak Challenge]",
+                "console": "Wii",
+                "genre": "Beat 'em Up",
+                "parent_game_id": 34747,
+                "image_icon": "https://example.test/subset-icon.png",
+                "image_box_art": "https://example.test/subset-cover.png",
+            },
+        })
+
+        summary = WrappedService(database).generate_year("Player", 2026, self.now)
+
+        top = summary.games.top_by_achievements
+        detail = summary.details.games[0]
+        self.assertEqual(summary.headline.games_with_progress, 1)
+        self.assertEqual(top.game_id, 34747)
+        self.assertEqual(top.title, "Pokémon Rumble")
+        self.assertEqual(top.image, "https://example.test/pokemon-rumble-icon.png")
+        self.assertEqual(top.value, 18)
+        self.assertEqual(detail.game_id, 34747)
+        self.assertEqual(detail.title, "Pokémon Rumble")
+        self.assertEqual(detail.image, "https://example.test/pokemon-rumble-icon.png")
+        self.assertEqual(detail.cover_image, "https://example.test/pokemon-rumble-cover.png")
+        self.assertEqual(detail.achievements, 18)
+        self.assertEqual(detail.active_days, 2)
+
     def test_top_genre_and_console_ties_are_deterministic(self):
         games = {
             1: {**game(1, "One", 2, 10, 20, "SNES"), "first_active_date": date(2025, 11, 2)},
@@ -241,6 +301,31 @@ class WrappedSummaryTests(unittest.TestCase):
         consoles = WrappedService._consoles(games)
         self.assertEqual(genres.top_genre.genre, "Action")
         self.assertEqual(consoles.top_by_achievements.console, "NES")
+
+    def test_event_sets_count_in_totals_but_not_console_rankings(self):
+        rows = complete_rows()
+        rows["2026-01-01"]["days"]["2026-01-05"] = day(
+            120,
+            600,
+            1200,
+            [
+                game(1, "Event Set", 100, 500, 1000, "Events"),
+                game(2, "Console Game", 20, 100, 200, "PlayStation 2"),
+            ],
+        )
+        summary = WrappedService(FakeDatabase(rows)).generate_year("Player", 2026, self.now)
+
+        self.assertEqual(summary.headline.hardcore_achievements, 120)
+        self.assertEqual(summary.headline.games_with_progress, 2)
+        self.assertEqual(summary.headline.consoles_with_progress, 1)
+        self.assertEqual(summary.consoles.top_by_achievements.console, "PlayStation 2")
+        for rankings in (
+            summary.consoles.achievements,
+            summary.consoles.hardcore_points,
+            summary.consoles.retro_points,
+            summary.consoles.unique_progress_games,
+        ):
+            self.assertNotIn("Events", [row.console for row in rankings])
 
     def test_awards_are_separated_by_reliability_and_month(self):
         db = FakeDatabase(

@@ -76,6 +76,8 @@ def init_db():
             game_title TEXT NOT NULL,
             console TEXT,
             genre TEXT,
+            parent_game_id INTEGER,
+            image_icon TEXT,
             image_box_art TEXT,
             image_box_art_checked_at TEXT,
             refreshed_at TEXT NOT NULL
@@ -94,6 +96,10 @@ def init_db():
             WHERE image_box_art IS NOT NULL
             """
         )
+    if "parent_game_id" not in metadata_columns:
+        cur.execute("ALTER TABLE game_metadata_cache ADD COLUMN parent_game_id INTEGER")
+    if "image_icon" not in metadata_columns:
+        cur.execute("ALTER TABLE game_metadata_cache ADD COLUMN image_icon TEXT")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS user_game_library_cache (
@@ -292,11 +298,14 @@ def init_db():
             retro_points INTEGER NOT NULL,
             covered_through TEXT NOT NULL,
             daily_json TEXT,
+            utc_daily_json TEXT,
             PRIMARY KEY (user_key, month_start)
         )
     """)
     if "daily_json" not in {row[1] for row in cur.execute("PRAGMA table_info(all_time_chart_months)")}:
         cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN daily_json TEXT")
+    if "utc_daily_json" not in {row[1] for row in cur.execute("PRAGMA table_info(all_time_chart_months)")}:
+        cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN utc_daily_json TEXT")
     if "game_title" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_mastery_events)")}:
         cur.execute("ALTER TABLE processed_mastery_events ADD COLUMN game_title TEXT")
     if "game_image" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_mastery_events)")}:
@@ -754,7 +763,7 @@ def get_game_metadata(game_ids: list[int] | set[int]) -> dict[int, dict]:
     placeholders = ", ".join("?" for _ in ids)
     with get_conn() as conn:
         rows = conn.execute(
-            f"SELECT game_id, game_title, console, genre, image_box_art, image_box_art_checked_at, refreshed_at FROM game_metadata_cache WHERE game_id IN ({placeholders})",
+            f"SELECT game_id, game_title, console, genre, parent_game_id, image_icon, image_box_art, image_box_art_checked_at, refreshed_at FROM game_metadata_cache WHERE game_id IN ({placeholders})",
             ids,
         ).fetchall()
         return {row["game_id"]: dict(row) for row in rows}
@@ -770,14 +779,16 @@ def save_game_metadata(metadata: dict):
         conn.execute(
             """
             INSERT INTO game_metadata_cache (
-                game_id, game_title, console, genre, image_box_art,
+                game_id, game_title, console, genre, parent_game_id, image_icon, image_box_art,
                 image_box_art_checked_at, refreshed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(game_id) DO UPDATE SET
                 game_title = excluded.game_title,
                 console = excluded.console,
                 genre = excluded.genre,
+                parent_game_id = excluded.parent_game_id,
+                image_icon = COALESCE(excluded.image_icon, game_metadata_cache.image_icon),
                 image_box_art = COALESCE(excluded.image_box_art, game_metadata_cache.image_box_art),
                 image_box_art_checked_at = COALESCE(
                     excluded.image_box_art_checked_at,
@@ -787,7 +798,8 @@ def save_game_metadata(metadata: dict):
             """,
             (
                 metadata["game_id"], metadata["game_title"], metadata.get("console"),
-                metadata.get("genre"), metadata.get("image_box_art"),
+                metadata.get("genre"), metadata.get("parent_game_id"),
+                metadata.get("image_icon"), metadata.get("image_box_art"),
                 image_box_art_checked_at, refreshed_at,
             ),
         )
@@ -999,6 +1011,7 @@ def get_all_time_chart_cache() -> tuple[dict, dict]:
         for row in conn.execute("SELECT * FROM all_time_chart_months ORDER BY month_start"):
             month = dict(row)
             month["days"] = json.loads(month["daily_json"]) if month["daily_json"] is not None else None
+            month["utc_days"] = json.loads(month["utc_daily_json"]) if month["utc_daily_json"] is not None else None
             months.setdefault(row["user_key"].lower(), {})[row["month_start"]] = month
     return profiles, months
 
@@ -1119,17 +1132,31 @@ def save_all_time_chart_profile(username: str, profile: dict, refreshed_at: date
         conn.commit()
 
 
-def save_all_time_chart_month(user_key: str, month_start: str, points: dict, covered_through: datetime, days: dict):
+def save_all_time_chart_month(
+    user_key: str,
+    month_start: str,
+    points: dict,
+    covered_through: datetime,
+    days: dict,
+    utc_days: dict | None = None,
+):
     with closing(get_conn()) as conn:
         conn.execute("""
-            INSERT INTO all_time_chart_months (user_key, month_start, hardcore_points, retro_points, covered_through, daily_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO all_time_chart_months (
+                user_key, month_start, hardcore_points, retro_points,
+                covered_through, daily_json, utc_daily_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_key, month_start) DO UPDATE SET
                 hardcore_points = excluded.hardcore_points,
                 retro_points = excluded.retro_points,
                 covered_through = excluded.covered_through,
-                daily_json = excluded.daily_json
-        """, (user_key, month_start, points["hardcore_points"], points["retro_points"], covered_through.isoformat(), json.dumps(days)))
+                daily_json = excluded.daily_json,
+                utc_daily_json = excluded.utc_daily_json
+        """, (
+            user_key, month_start, points["hardcore_points"], points["retro_points"],
+            covered_through.isoformat(), json.dumps(days), json.dumps(utc_days) if utc_days is not None else None,
+        ))
         conn.commit()
 
 

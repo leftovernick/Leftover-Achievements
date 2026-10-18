@@ -40,8 +40,8 @@ def month_ranges(joined, now):
         start = following
 
 
-def daily_points(achievements, start, end):
-    """Retain local-calendar daily totals for both lifetime curves and weekly history."""
+def daily_points(achievements, start, end, calendar_timezone=None):
+    """Aggregate daily totals in local time by default, or in an explicit timezone."""
     days = {}
     seen = set()
     for achievement in achievements:
@@ -55,7 +55,8 @@ def daily_points(achievements, start, end):
             if achievement_id in seen:
                 continue
             seen.add(achievement_id)
-        day = earned.astimezone().date().isoformat()
+        calendar_time = earned.astimezone(calendar_timezone) if calendar_timezone else earned.astimezone()
+        day = calendar_time.date().isoformat()
         row = days.setdefault(day, {"hardcore_points": 0, "retro_points": 0,
                                     "achievements_earned": 0, "games": {}})
         row["hardcore_points"] += int(achievement.get("Points") or achievement.get("points") or 0)
@@ -227,6 +228,8 @@ class AllTimeCharts:
     def month_is_fresh(row, end, now):
         if not row or row.get("days") is None:
             return False
+        if row.get("utc_days") is None:
+            return False
         if any("games" not in values for values in row["days"].values()):
             return False
         covered = parse_date(row["covered_through"])
@@ -371,8 +374,9 @@ class AllTimeCharts:
             try:
                 achievements = await self.client.achievements_earned_between(target, start, end)
                 days = daily_points(achievements, start, end)
+                utc_days = daily_points(achievements, start, end, timezone.utc)
                 points = {field: sum(day[field] for day in days.values()) for field in ("hardcore_points", "retro_points")}
-                self.db.save_all_time_chart_month(key, month.date().isoformat(), points, end, days)
+                self.db.save_all_time_chart_month(key, month.date().isoformat(), points, end, days, utc_days)
                 self.progress["completed"] += 1
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError, KeyError) as exc:
                 logger.warning("Could not backfill all-time chart for %s during %s: %s: %s", username, month.date(), type(exc).__name__, exc)

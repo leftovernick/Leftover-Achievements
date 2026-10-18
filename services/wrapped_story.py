@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from services.wrapped import WrappedGameDetail, WrappedSummary
@@ -70,6 +70,82 @@ def _known_console_leader(rows) -> str | None:
     return next((row.console for row in rows if row.console != "Unknown"), None)
 
 
+def _display_date(value: date | datetime) -> str:
+    return f"{value:%b} {value.day}, {value.year}"
+
+
+def special_highlight_presentation(variant: str, data: dict) -> dict:
+    """Turn any qualifying special fact into one consistent visual story."""
+    if variant == "mastery_sprint":
+        count = data["largest_cluster_size"]
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+        start_day = start_date.date() if isinstance(start_date, datetime) else start_date
+        end_day = end_date.date() if isinstance(end_date, datetime) else end_date
+        if start_day and end_day and start_day != end_day:
+            date_label = f"{start_date:%b} {start_date.day}–{end_date.day}, {end_date.year}"
+        elif start_date:
+            date_label = _display_date(start_date)
+        else:
+            date_label = "Inside one 24-hour window"
+        return {
+            "eyebrow": "Mastery sprint",
+            "title": "A mastery run with no brakes.",
+            "body": "Every game mastered during the run, in order.",
+            "primary": f"{count}", "primary_label": "masteries in 24 hours",
+            "date_label": date_label,
+            "facts": [],
+        }
+    if variant == "extreme_month_dominance":
+        month_date = date.fromisoformat(data["month"])
+        return {
+            "eyebrow": "Month dominance",
+            "title": "One month owned the year.",
+            "body": "A majority of the year’s achievements arrived in this one month.",
+            "primary": f'{data["share"]:.1f}%', "primary_label": "of the year’s achievements",
+            "month_name": month_date.strftime("%B"),
+            "month_year": str(month_date.year),
+            "facts": [],
+        }
+    if variant == "extreme_single_game_dominance":
+        return {
+            "eyebrow": data["game"]["title"],
+            "title": "One game took over.",
+            "body": "No other game came close to shaping the year this much.",
+            "primary": f'{data["share"]:.1f}%', "primary_label": "of your year’s achievements",
+            "other_share": f'{100 - data["share"]:.1f}%',
+            "game_achievements": f'{data["game"]["achievements"]:,}',
+            "facts": [],
+        }
+    if variant == "huge_comeback":
+        quiet_start = data.get("start_date")
+        quiet_end = data.get("end_date")
+        return_date = data.get("activity_after")
+        return {
+            "eyebrow": "The comeback",
+            "title": "Then you lit it back up.",
+            "body": "A long quiet stretch ended with a clean return.",
+            "primary": f'{data["days"]:,}', "primary_label": "quiet days",
+            "quiet_range": (
+                f"{_display_date(quiet_start)}–{_display_date(quiet_end)}"
+                if quiet_start and quiet_end else None
+            ),
+            "return_date": _display_date(return_date) if return_date else None,
+            "facts": [],
+        }
+    return {
+        "eyebrow": _display_date(data["date"]),
+        "title": "Rarity did the heavy lifting.",
+        "body": "That day’s achievements were valued far above their base score.",
+        "primary": f'{data["ratio"]:.1f}×', "primary_label": "the base point value",
+        "facts": [
+            {"label": "Base points", "value": f'{data["hardcore_points"]:,}'},
+            {"label": "RetroPoints", "value": f'{data["retro_points"]:,}'},
+        ],
+        "conversion": True,
+    }
+
+
 def _mastery_clusters(masteries) -> tuple[list[list], float | None]:
     ordered = sorted(masteries, key=lambda mastery: mastery.awarded_at)
     clusters = []
@@ -105,6 +181,30 @@ def _longest_internal_gap(days):
                 "activity_after": right,
             })
     return min(candidates, key=lambda gap: (-gap["days"], gap["start_date"])) if candidates else None
+
+
+def comeback_weekly_activity(days, return_date: date, period_end: date, *, week_limit: int = 8) -> list[dict]:
+    """Summarize the real calendar weeks immediately following a comeback."""
+    weeks = []
+    for index in range(week_limit):
+        start_date = return_date + timedelta(days=index * 7)
+        if start_date > period_end:
+            break
+        end_date = min(start_date + timedelta(days=6), period_end)
+        matching_days = [day for day in days if start_date <= day.date <= end_date]
+        weeks.append({
+            "week": index + 1,
+            "start_date": start_date,
+            "end_date": end_date,
+            "achievements": sum(day.achievements for day in matching_days),
+            "active_days": len(matching_days),
+        })
+
+    peak = max((week["achievements"] for week in weeks), default=0)
+    for week in weeks:
+        week["relative_percent"] = _percent(week["achievements"], peak)
+        week["is_peak"] = peak > 0 and week["achievements"] == peak
+    return weeks
 
 
 class WrappedStorySelector:
@@ -252,11 +352,20 @@ class WrappedStorySelector:
             reason=f"The top ten games supplied {top_ten_share:.1f}% of achievements.",
         )
 
+        combined_points_by_console = {}
+        for rows in (summary.consoles.hardcore_points, summary.consoles.retro_points):
+            for row in rows:
+                if row.console != "Unknown":
+                    combined_points_by_console[row.console] = combined_points_by_console.get(row.console, 0) + row.value
+        combined_points_leader = max(
+            combined_points_by_console,
+            key=combined_points_by_console.get,
+            default=None,
+        )
         console_leaders = {
             "achievements": summary.consoles.top_by_achievements.console if summary.consoles.top_by_achievements else None,
             "progress_games": summary.consoles.top_by_games.console if summary.consoles.top_by_games else None,
-            "hardcore_points": _known_console_leader(summary.consoles.hardcore_points),
-            "retro_points": _known_console_leader(summary.consoles.retro_points),
+            "points": combined_points_leader,
         }
         top_console = console_leaders["achievements"]
         top_console_achievements = next(
@@ -271,6 +380,17 @@ class WrappedStorySelector:
         }
         console_sweep = len(set(console_leaders.values())) == 1
         split_console_leaders = len(set(console_leaders.values())) > 1
+        leader_groups_by_console = {}
+        for metric, label in (
+            ("achievements", "achievements earned"),
+            ("progress_games", "games played"),
+            ("points", "points"),
+        ):
+            leader_groups_by_console.setdefault(console_leaders[metric], []).append(label)
+        leader_groups = [
+            {"console": console, "metrics": metrics}
+            for console, metrics in leader_groups_by_console.items()
+        ]
         if console_share >= 50:
             dominance_level = "console_majority"
         elif console_share >= 35:
@@ -292,9 +412,10 @@ class WrappedStorySelector:
                 "dominance_level": dominance_level,
                 "console_sweep": console_sweep,
                 "split_console_leaders": split_console_leaders,
+                "leader_groups": leader_groups,
                 "selection_flags": console_flags,
             },
-            reason=("One console led all four metrics." if console_sweep else "Console leaders differed across the four metrics." if split_console_leaders else f"The achievement leader held {console_share:.1f}% of achievements."),
+            reason=("One console led all three categories." if console_sweep else "Console leaders differed across the three categories." if split_console_leaders else f"The achievement leader held {console_share:.1f}% of achievements."),
         )
 
         genre_eligible = summary.genres.coverage_percent >= 70 and not history_incomplete and bool(summary.genres.achievement_shares)
@@ -430,6 +551,19 @@ class WrappedStorySelector:
         if selected_activity is None:
             selected_activity = (0, 2, "weekday_fallback", "weekday")
         _, _, activity_variant, activity_kind = selected_activity
+        weekday_names = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+        top_weekday_achievements = weekday_totals[top_weekday_index]["achievements"]
+        weekday_breakdown = [
+            {
+                "weekday": weekday_names[index],
+                "short_label": weekday_names[index][:3],
+                "achievements": values["achievements"],
+                "active_days": values["active_days"],
+                "share": _percent(values["achievements"], total_achievements),
+                "relative_percent": _percent(values["achievements"], top_weekday_achievements),
+            }
+            for index, values in weekday_totals.items()
+        ]
         activity_support = {
             "longest_streak": asdict(streak) if streak else None,
             "streak_achievements": sum(
@@ -438,12 +572,16 @@ class WrappedStorySelector:
             ),
             "longest_inactive_gap": asdict(gap) if gap else None,
             "longest_internal_inactive_gap": internal_gap,
-            "top_weekday": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[top_weekday_index],
+            "top_weekday": weekday_names[top_weekday_index],
             "top_weekday_share": top_weekday_share,
             "weekday_totals": weekday_totals,
+            "weekday_breakdown": weekday_breakdown,
         }
         activity_headline = activity_support["longest_streak"] if activity_kind == "streak" else internal_gap if activity_kind == "comeback" else {
-            "weekday": activity_support["top_weekday"], "share": top_weekday_share,
+            "weekday": activity_support["top_weekday"],
+            "share": top_weekday_share,
+            "achievements": top_weekday_achievements,
+            "active_days": weekday_totals[top_weekday_index]["active_days"],
         }
         add(
             "activity_pattern", activity_variant, required=True,
@@ -453,7 +591,8 @@ class WrappedStorySelector:
         )
 
         clusters, shortest_gap_seconds = _mastery_clusters(summary.details.masteries)
-        largest_cluster = max((len(cluster) for cluster in clusters), default=0)
+        largest_cluster_rows = max(clusters, key=len, default=[])
+        largest_cluster = len(largest_cluster_rows)
         if summary.headline.mastered_games:
             if largest_cluster >= 4:
                 mastery_variant = "mastery_sprint"
@@ -474,10 +613,7 @@ class WrappedStorySelector:
                     "timeline": [asdict(mastery) for mastery in summary.details.masteries],
                     "cluster_count": len(clusters),
                     "largest_cluster_size": largest_cluster,
-                    "largest_cluster": [
-                        asdict(mastery)
-                        for mastery in max(clusters, key=len, default=[])
-                    ],
+                    "largest_cluster": [asdict(mastery) for mastery in largest_cluster_rows],
                     "shortest_gap_seconds": shortest_gap_seconds,
                 },
                 reason=(f"The largest 24-hour mastery cluster contained {largest_cluster} games." if clusters else f"The year recorded {summary.headline.mastered_games} masteries."),
@@ -487,56 +623,40 @@ class WrappedStorySelector:
         if not history_incomplete:
             special_candidates = []
             if largest_cluster >= 4:
-                special_candidates.append((1, "mastery_sprint", {"largest_cluster_size": largest_cluster}, "mastery_sprint"))
-            if biggest_day.achievements >= 100:
-                special_candidates.append((2, "massive_single_day", asdict(biggest_day), "biggest_day"))
+                special_candidates.append((1, "mastery_sprint", {
+                    "largest_cluster_size": largest_cluster,
+                    "start_date": largest_cluster_rows[0].awarded_at,
+                    "end_date": largest_cluster_rows[-1].awarded_at,
+                    "masteries": [asdict(mastery) for mastery in largest_cluster_rows],
+                }, "mastery_sprint"))
             if busiest_share >= 60:
                 special_candidates.append((3, "extreme_month_dominance", {"month": busiest_month.month, "share": busiest_share}, "month_dominance"))
             if shares["top_1_share"] >= 35:
                 special_candidates.append((4, "extreme_single_game_dominance", {"game": _metric_game(achievement_winner), "share": shares["top_1_share"]}, "single_game_dominance"))
-            if streak and streak.days >= 45:
-                special_candidates.append((5, "huge_streak", asdict(streak), "streak"))
             if internal_gap and internal_gap["days"] >= 180:
-                special_candidates.append((6, "huge_comeback", internal_gap, "comeback"))
-            if console_share >= 50:
-                special_candidates.append((7, "major_console_dominance", {"console": top_console, "share": console_share}, "console_dominance"))
-            if genre_data and genre_data["top_genre_share"] >= 45:
-                special_candidates.append((8, "extreme_genre_dominance", {"genre": genre_data["top_genre"], "share": genre_data["top_genre_share"]}, "genre_dominance"))
-            if genre_data and genre_data["top_genre_share"] < 15 and genre_data["known_genre_labels"] >= 15:
-                special_candidates.append((9, "very_broad_genre_year", genre_data, "broad_genres"))
-            if summary.headline.games_with_progress >= 100 and shares["top_10_share"] < 45:
-                special_candidates.append((10, "broad_game_variety", {"progress_games": summary.headline.games_with_progress, "top_10_share": shares["top_10_share"]}, "broad_games"))
+                special_candidates.append((6, "huge_comeback", {
+                    **internal_gap,
+                    "weekly_activity": comeback_weekly_activity(
+                        days, internal_gap["activity_after"], summary.period_end,
+                    ),
+                }, "comeback"))
             unusual_days = [day for day in days if day.hardcore_points > 0 and day.retro_points >= 500 and day.retro_points >= day.hardcore_points * 4]
             if unusual_days:
                 unusual_day = max(unusual_days, key=lambda day: (day.retro_points / day.hardcore_points, day.retro_points))
                 special_candidates.append((11, "unusual_retropoint_day", {**asdict(unusual_day), "ratio": unusual_day.retro_points / unusual_day.hardcore_points}, "unusual_retropoint_day"))
 
-            used_core_facts = {"biggest_day"}
-            if month_variant == "dominant_month":
-                used_core_facts.add("month_dominance")
-            if shares["top_1_share"] >= 35:
-                used_core_facts.add("single_game_dominance")
-            if activity_kind == "streak" and streak and streak.days >= 45:
-                used_core_facts.add("streak")
-            if activity_kind == "comeback" and internal_gap and internal_gap["days"] >= 180:
-                used_core_facts.add("comeback")
-            if summary.headline.mastered_games and mastery_variant == "mastery_sprint":
-                used_core_facts.add("mastery_sprint")
-            if console_share >= 50:
-                used_core_facts.add("console_dominance")
-            if genre_data and genre_data["top_genre_share"] >= 45:
-                used_core_facts.add("genre_dominance")
-            if genre_data and genre_data["top_genre_share"] < 15 and genre_data["known_genre_labels"] >= 15:
-                used_core_facts.add("broad_genres")
-            if focus_variant == "broad_year" and summary.headline.games_with_progress >= 100:
-                used_core_facts.add("broad_games")
-            special_candidates = [candidate for candidate in special_candidates if candidate[3] not in used_core_facts]
             if special_candidates:
-                _, special_variant, special_data, _ = min(special_candidates, key=lambda candidate: candidate[0])
+                impressiveness_rank, special_variant, special_data, _ = min(
+                    special_candidates, key=lambda candidate: candidate[0],
+                )
                 add(
                     "special_highlight", special_variant, required=False,
                     headline=special_data,
-                    reason=f"{special_variant} was the highest-priority qualifying fact not already used as another card's primary story.",
+                    supporting={
+                        "presentation": special_highlight_presentation(special_variant, special_data),
+                        "impressiveness_rank": impressiveness_rank,
+                    },
+                    reason=f"{special_variant} was the most impressive qualifying special fact.",
                 )
 
         if (

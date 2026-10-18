@@ -7,7 +7,7 @@
     <link rel="icon" type="image/png" href="/static/images/favicon.png" />
     <link rel="stylesheet" href="/static/css/wrapped.css?v={{ wrapped_css_version }}" />
   </head>
-  <body class="wrapped-page wrapped-theme-{{ plan.wrapped_year % 5 }}" data-wrapped-year="{{ plan.wrapped_year }}" data-wrapped-username="{{ summary.canonical_username }}">
+  <body class="wrapped-page wrapped-theme-{{ plan.wrapped_year % 5 }}" data-wrapped-year="{{ plan.wrapped_year }}" data-wrapped-username="{{ summary.canonical_username }}"{% if initial_card_type %} data-initial-card-type="{{ initial_card_type }}"{% endif %}{% if selected_slide_type %} data-selected-slide-type="{{ selected_slide_type }}" data-selected-slide-variant="{{ selected_slide_variant }}"{% endif %}>
     {% set month_names = {"01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun", "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"} %}
     {% set ranked_games = summary.details.games|sort(attribute="achievements", reverse=true) %}
     {% set art_games = ranked_games|selectattr("image")|list %}
@@ -35,6 +35,24 @@
         <button type="button" data-progress-index="{{ loop.index0 }}" aria-label="Go to story {{ loop.index }}: {{ card.type|replace('_', ' ') }}"><span></span></button>
       {% endfor %}
     </nav>
+
+    {% if available_prototype_years %}
+      <aside class="dev-preview-switchers" aria-label="Wrapped developer previews">
+        <label class="slide-result-switcher">
+          <span>Slide result preview</span>
+          <select data-slide-result-preview aria-label="Preview a result for a Wrapped slide">
+            {% for group in slide_result_previews %}
+              <optgroup label="{{ group.label }}">
+                {% for option in group.options %}
+                  {% set result_value = group.type ~ '|' ~ option.variant %}
+                  <option value="{{ result_value }}"{% if result_value == selected_slide_result %} selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
+        </label>
+      </aside>
+    {% endif %}
 
     <main id="wrapped-story" class="wrapped-story" data-wrapped-story>
       {% for card in plan.cards %}
@@ -111,7 +129,7 @@
               </div>
 
             {% elif card.type == "game_focus" %}
-              {% set focus_art_limit = 10 if card.variant == "broad_year" else 5 %}
+              {% set focus_art_limit = 10 if card.variant == "broad_year" else 6 if card.variant == "mixed_year" else 5 %}
               {% set focus_art_games = art_games[:focus_art_limit] %}
               <div class="focus-layout focus-layout--{{ card.variant }}{% if not focus_art_games %} focus-layout--no-art{% endif %}">
                 <div class="focus-heading">
@@ -120,22 +138,67 @@
                     <h2 id="story-title-{{ loop.index }}">A year spread across many worlds.</h2>
                   {% elif card.variant == "focused_year" %}
                     <h2 id="story-title-{{ loop.index }}">A few games carried the year.</h2>
+                    <p class="focus-explainer">Your achievements clustered around a small core rotation.</p>
                   {% else %}
-                    <h2 id="story-title-{{ loop.index }}">Favorites, with room to roam.</h2>
+                    <h2 id="story-title-{{ loop.index }}">The spotlight stayed shared.</h2>
+                    <p class="focus-explainer">Several favorites shaped the year, but no single game took it over.</p>
                   {% endif %}
                 </div>
                 {% if focus_art_games %}
                   <div class="focus-art-field" aria-label="Leading games from the year">
                     {% for game in focus_art_games %}
-                      <figure><img src="{{ game.image }}" alt="Cover art for {{ game.title }}" /><figcaption>{{ game.title|replace('~Homebrew~ ', '') }}</figcaption></figure>
+                      <figure data-rank="#{{ loop.index }}"><img src="{{ game.image }}" alt="Game icon for {{ game.title }}" /><figcaption>{{ game.title|replace('~Homebrew~ ', '') }}</figcaption></figure>
                     {% endfor %}
                   </div>
                 {% endif %}
-                <div class="focus-shares" aria-label="Achievement share by leading games">
-                  {% for label, value in [("Top 1", card.headline_data.top_1_share), ("Top 3", card.headline_data.top_3_share), ("Top 5", card.headline_data.top_5_share), ("Top 10", card.headline_data.top_10_share)] %}
-                    <p{% if label == "Top 10" %} class="is-key"{% endif %}><span>{{ label }}</span><strong>{{ "%.1f"|format(value) }}%</strong></p>
-                  {% endfor %}
-                </div>
+                {% if card.variant == "focused_year" %}
+                  <div class="focused-focus-evidence">
+                    <div class="focused-focus-summary">
+                      <strong>{{ "%.1f"|format(card.headline_data.top_10_share) }}%</strong>
+                      <span>of every achievement came from your top 10 games</span>
+                    </div>
+                    <div class="focused-focus-ladder" aria-label="Cumulative achievement share among the leading games">
+                      {% for label, value in [("Top 1", card.headline_data.top_1_share), ("Top 3", card.headline_data.top_3_share), ("Top 5", card.headline_data.top_5_share), ("Top 10", card.headline_data.top_10_share)] %}
+                        <p style="--focus-share: {{ '%.1f'|format(value) }}%">
+                          <span>{{ label }}</span><i><b></b></i><strong>{{ "%.1f"|format(value) }}%</strong>
+                        </p>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% elif card.variant == "mixed_year" %}
+                  <div class="mixed-focus-evidence">
+                    <div class="mixed-focus-total">
+                      <p><strong>{{ "%.1f"|format(card.headline_data.top_10_share) }}%</strong><span>Top 10 games</span></p>
+                      <p><strong>{{ "%.1f"|format(100 - card.headline_data.top_10_share) }}%</strong><span>All other games</span></p>
+                    </div>
+                    <div class="mixed-focus-bar" role="img" aria-label="The top 10 games accounted for {{ '%.1f'|format(card.headline_data.top_10_share) }}% of achievements; all other games accounted for {{ '%.1f'|format(100 - card.headline_data.top_10_share) }}%" style="--top-ten-share: {{ '%.1f'|format(card.headline_data.top_10_share) }}%"><i></i></div>
+                    <div class="mixed-focus-steps" aria-label="Achievement share among the leading games">
+                      {% for label, value in [("Top 1", card.headline_data.top_1_share), ("Top 3", card.headline_data.top_3_share), ("Top 5", card.headline_data.top_5_share)] %}
+                        <p><span>{{ label }}</span><strong>{{ "%.1f"|format(value) }}%</strong></p>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% elif card.variant == "broad_year" %}
+                  {% set beyond_top_ten_share = 100 - card.headline_data.top_10_share %}
+                  {% set top_ten_blocks = (card.headline_data.top_10_share / 5)|round|int %}
+                  <div class="broad-focus-evidence">
+                    <div class="broad-focus-comparison">
+                      <p><span>Top 10 games</span><strong>{{ "%.1f"|format(card.headline_data.top_10_share) }}%</strong></p>
+                      <b>vs</b>
+                      <p class="is-beyond"><span>Every other game</span><strong>{{ "%.1f"|format(beyond_top_ten_share) }}%</strong></p>
+                    </div>
+                    <div class="broad-focus-field" role="img" aria-label="The top 10 games accounted for {{ '%.1f'|format(card.headline_data.top_10_share) }}% of achievements; every other game accounted for {{ '%.1f'|format(beyond_top_ten_share) }}%. Each block represents about 5% of achievements.">
+                      {% for block in range(20) %}<i{% if loop.index <= top_ten_blocks %} class="is-top-ten"{% endif %}></i>{% endfor %}
+                    </div>
+                    <div class="broad-focus-key" aria-hidden="true"><span><i></i>Top 10</span><span><i></i>Beyond the Top 10</span><small>Each block ≈ 5% of the year</small></div>
+                  </div>
+                {% else %}
+                  <div class="focus-shares" aria-label="Achievement share by leading games">
+                    {% for label, value in [("Top 1", card.headline_data.top_1_share), ("Top 3", card.headline_data.top_3_share), ("Top 5", card.headline_data.top_5_share), ("Top 10", card.headline_data.top_10_share)] %}
+                      <p{% if label == "Top 10" %} class="is-key"{% endif %}><span>{{ label }}</span><strong>{{ "%.1f"|format(value) }}%</strong></p>
+                    {% endfor %}
+                  </div>
+                {% endif %}
               </div>
 
             {% elif card.type == "console" %}
@@ -147,7 +210,17 @@
                 <div class="console-facts">
                   <p><strong>{{ "{:,}".format(card.supporting_data.top_console_values.achievements) }}</strong><span>achievements</span></p>
                   <p><strong>{{ card.supporting_data.top_console_values.progress_games }}</strong><span>progress-games</span></p>
-                  {% if card.supporting_data.console_sweep %}<p class="sweep-stamp">Led achievements<br />games · points · RetroPoints</p>{% endif %}
+                  {% if card.supporting_data.console_sweep %}<p class="sweep-stamp">Led achievements earned<br />games played · points</p>{% endif %}
+                  {% if card.supporting_data.split_console_leaders %}
+                    <div class="console-split">
+                      <span>Split leaders</span>
+                      <dl>
+                        {% for leader in card.supporting_data.leader_groups %}
+                          <div><dt>{{ leader.console }}</dt><dd>{{ leader.metrics|join(" · ") }}</dd></div>
+                        {% endfor %}
+                      </dl>
+                    </div>
+                  {% endif %}
                 </div>
               </div>
 
@@ -195,18 +268,27 @@
 
             {% elif card.type == "biggest_day" %}
               <div class="day-layout">
-                <div class="calendar-block">
-                  <span>{{ card.headline_data.date.strftime("%b") }}</span>
-                  <strong>{{ card.headline_data.date.strftime("%-d") }}</strong>
-                  <small>{{ card.headline_data.weekday }}</small>
+                <div class="day-confetti" aria-hidden="true">
+                  {% for piece in range(18) %}<i></i>{% endfor %}
                 </div>
-                <div>
-                  <p class="wrapped-overline">Biggest day</p>
+                <div class="day-calendar-wrap">
+                  <div class="calendar-block">
+                    <span>{{ card.headline_data.date.strftime("%b") }}</span>
+                    <strong>{{ card.headline_data.date.strftime("%-d") }}</strong>
+                    <small>{{ card.headline_data.weekday }}</small>
+                  </div>
+                </div>
+                <div class="day-copy">
+                  <p class="wrapped-overline">The year’s biggest day</p>
                   <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.achievements }}</span> achievements</h2>
-                  <p class="wrapped-deck">Across {{ card.headline_data.games_active }} games</p>
+                  <p class="wrapped-deck">Across {{ card.headline_data.games_active }} game{% if card.headline_data.games_active != 1 %}s{% endif %}</p>
+                  <div class="day-metrics" aria-label="Points earned that day">
+                    <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
+                    <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                  </div>
                   <div class="mini-cover-row">
                     {% for game in card.supporting_data.active_games[:7] %}
-                      {% if game.image %}<img src="{{ game.image }}" alt="{{ game.title }}" title="{{ game.title }}" />{% endif %}
+                      {% if game.image %}<figure><img src="{{ game.image }}" alt="{{ game.title }}" title="{{ game.title }}" /></figure>{% endif %}
                     {% endfor %}
                   </div>
                 </div>
@@ -214,64 +296,173 @@
 
             {% elif card.type == "activity_pattern" %}
               <div class="streak-layout">
-                <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
                 {% if "streak" in card.variant %}
-                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.days }}</span> days straight</h2>
-                  <p class="wrapped-deck">{{ card.headline_data.start_date.strftime("%b") }} {{ card.headline_data.start_date.day }} → {{ card.headline_data.end_date.strftime("%b") }} {{ card.headline_data.end_date.day }} · {{ "{:,}".format(card.supporting_data.streak_achievements) }} achievements</p>
-                  <div class="streak-ticks" aria-label="{{ card.headline_data.days }} consecutive active days">
-                    {% for tick in range(card.headline_data.days) %}<i></i>{% endfor %}
+                  <div class="streak-celebration">
+                    <header class="streak-heading">
+                      <p class="wrapped-overline">Longest run of the year</p>
+                      <h2 id="story-title-{{ loop.index }}">You kept it going.</h2>
+                      <p class="wrapped-deck"><strong>{{ "{:,}".format(card.supporting_data.streak_achievements) }}</strong> achievements earned without missing a day.</p>
+                    </header>
+                    <div class="streak-number-card" aria-label="{{ card.headline_data.days }} days in a row">
+                      <strong>{{ card.headline_data.days }}</strong>
+                      <span>days in a row</span>
+                    </div>
+                    <div class="streak-journey">
+                      <p class="streak-date">
+                        <span>Started</span>
+                        <strong>{{ card.headline_data.start_date.strftime("%b") }} {{ card.headline_data.start_date.day }}</strong>
+                        <small>{{ card.headline_data.start_date.year }}</small>
+                      </p>
+                      <div class="streak-days" style="--streak-columns: {% if card.headline_data.days <= 14 %}{{ card.headline_data.days }}{% else %}15{% endif %}" aria-label="{{ card.headline_data.days }} consecutive active days">
+                        {% for tick in range(card.headline_data.days) %}<i{% if loop.first %} class="is-first"{% elif loop.last %} class="is-last"{% endif %} aria-hidden="true"><span>{{ loop.index }}</span></i>{% endfor %}
+                      </div>
+                      <p class="streak-date streak-date--finish">
+                        <span>Finished</span>
+                        <strong>{{ card.headline_data.end_date.strftime("%b") }} {{ card.headline_data.end_date.day }}</strong>
+                        <small>{{ card.headline_data.end_date.year }}</small>
+                      </p>
+                    </div>
                   </div>
                 {% elif "comeback" in card.variant %}
+                  <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
                   <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.days }}</span> quiet days</h2>
                   <p class="wrapped-deck">Then activity returned on {{ card.headline_data.activity_after.strftime("%b") }} {{ card.headline_data.activity_after.day }}.</p>
                 {% else %}
-                  <h2 id="story-title-{{ loop.index }}">{{ card.headline_data.weekday }}</h2>
-                  <p class="wrapped-deck">{{ "%.1f"|format(card.headline_data.share) }}% of the year's achievements.</p>
+                  <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
+                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.weekday }}</span> led your week.</h2>
+                  <p class="wrapped-deck">{{ "{:,}".format(card.headline_data.achievements) }} achievements across {{ card.headline_data.active_days }} active {{ card.headline_data.weekday }}s — {{ "%.1f"|format(card.headline_data.share) }}% of everything you earned.</p>
+                  <div class="weekday-pattern" aria-label="Achievements earned by weekday">
+                    {% for day in card.supporting_data.weekday_breakdown %}
+                      <p{% if day.weekday == card.headline_data.weekday %} class="is-leader"{% endif %} title="{{ day.weekday }}: {{ day.achievements }} achievements">
+                        <i><b style="--weekday-level: {{ "%.1f"|format(day.relative_percent) }}%"></b></i>
+                        <strong>{{ day.short_label }}</strong>
+                        <span>{{ "{:,}".format(day.achievements) }}</span>
+                      </p>
+                    {% endfor %}
+                  </div>
                 {% endif %}
               </div>
 
             {% elif card.type == "mastery" %}
               <div class="mastery-heading">
                 <p class="wrapped-overline">{{ card.variant|replace('_', ' ') }}</p>
-                {% if card.supporting_data.largest_cluster_size >= 3 %}
-                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.supporting_data.largest_cluster_size }}</span> masteries.<br />One rapid run.</h2>
-                  <p class="wrapped-deck">{{ card.headline_data.masteries }} masteries across the full year</p>
-                {% else %}
-                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.masteries }}</span> games mastered.</h2>
-                  <p class="wrapped-deck">A chronological look at the year's completions</p>
-                {% endif %}
+                <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.masteries }}</span> games mastered.</h2>
+                <p class="wrapped-deck">Every mastery from the year, in order</p>
               </div>
-              <div class="mastery-cluster">
-                {% set displayed_masteries = card.supporting_data.largest_cluster if card.supporting_data.largest_cluster else card.supporting_data.timeline[:4] %}
+              {% set displayed_masteries = card.supporting_data.timeline %}
+              {% set mastery_count = displayed_masteries|length %}
+              <div class="mastery-cluster{% if mastery_count > 8 %} mastery-cluster--many{% endif %}{% if mastery_count > 16 %} mastery-cluster--crowded{% endif %}" style="--mastery-columns: {% if mastery_count <= 8 %}{{ mastery_count }}{% else %}8{% endif %}">
                 {% for mastery in displayed_masteries %}
                   <article>
                     {% if mastery.image %}<img src="{{ mastery.image }}" alt="Cover art for {{ mastery.game_title }}" />{% endif %}
-                    <div><span>{{ mastery.awarded_at.strftime("%I:%M %p").lstrip("0") }}</span><h3>{{ mastery.game_title|replace('~Homebrew~ ', '') }}</h3></div>
+                    <div><span>{{ mastery.awarded_at.strftime("%b") }} {{ mastery.awarded_at.day }}</span><h3>{{ mastery.game_title|replace('~Homebrew~ ', '') }}</h3></div>
                   </article>
                 {% endfor %}
               </div>
 
             {% elif card.type == "special_highlight" %}
-              <div class="weird-layout">
-                {% if card.variant == "unusual_retropoint_day" %}
-                  <p class="wrapped-overline">Unusual RetroPoint day · {{ card.headline_data.date.strftime("%b") }} {{ card.headline_data.date.day }}, {{ card.headline_data.date.year }}</p>
-                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.hardcore_points }}</span><small>points</small><b>vs</b><span>{{ card.headline_data.retro_points }}</span><small>RetroPoints</small></h2>
-                  <p class="ratio">{{ "%.2f"|format(card.headline_data.ratio) }}×</p>
+              {% set highlight = card.supporting_data.presentation %}
+              <div class="special-layout special-layout--{{ card.variant }}">
+                <header class="special-heading">
+                  <p class="wrapped-overline">{{ highlight.eyebrow }}</p>
+                  <h2 id="story-title-{{ loop.index }}">{{ highlight.title }}</h2>
+                  <p>{{ highlight.body }}</p>
+                </header>
+                {% if card.variant == "extreme_month_dominance" %}
+                  <div class="special-month-card">
+                    <span>{{ highlight.month_year }}</span>
+                    <strong>{{ highlight.month_name }}</strong>
+                    <p><b>{{ highlight.primary }}</b>{{ highlight.primary_label }}</p>
+                  </div>
+                {% elif card.variant == "extreme_single_game_dominance" %}
+                  <div class="special-game-card">
+                    {% if card.headline_data.game.image %}<img src="{{ card.headline_data.game.image }}" alt="{{ card.headline_data.game.title }}" />{% endif %}
+                    <div>
+                      <p><strong>{{ highlight.primary }}</strong><span>{{ highlight.primary_label }}</span></p>
+                      <h3>{{ card.headline_data.game.title }}</h3>
+                      <small>{{ highlight.game_achievements }} achievements earned</small>
+                    </div>
+                    <div class="special-game-share-labels" aria-hidden="true">
+                      <span>This game · {{ highlight.primary }}</span>
+                      <span>All other games · {{ highlight.other_share }}</span>
+                    </div>
+                    <div class="special-game-share" role="img" aria-label="This game accounted for {{ highlight.primary }} of your year’s achievements; all other games accounted for {{ highlight.other_share }}" style="--game-share: {{ card.headline_data.share }}%"><i></i></div>
+                  </div>
                 {% elif card.variant == "huge_comeback" %}
-                  <p class="wrapped-overline">A second act</p>
-                  <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.days }}</span><small>quiet days</small></h2>
-                  <p class="ratio">Activity returned</p>
+                  <div class="special-comeback-card">
+                    <div class="comeback-quiet">
+                      <strong>{{ highlight.primary }}</strong>
+                      <span>{{ highlight.primary_label }}</span>
+                      {% if highlight.quiet_range %}<small>{{ highlight.quiet_range }}</small>{% endif %}
+                    </div>
+                    <div class="comeback-rise" aria-label="Achievements earned in each of the first {{ card.headline_data.weekly_activity|length }} weeks after activity returned">
+                      <b>First {{ card.headline_data.weekly_activity|length }} weeks back <small>achievements</small></b>
+                      <div class="comeback-bars">
+                        {% for week in card.headline_data.weekly_activity %}
+                          <p{% if week.is_peak %} class="is-peak"{% endif %} aria-label="Week {{ week.week }}, {{ week.start_date.strftime('%b') }} {{ week.start_date.day }} through {{ week.end_date.strftime('%b') }} {{ week.end_date.day }}: {{ week.achievements }} achievements across {{ week.active_days }} active days" title="{{ week.start_date.strftime('%b') }} {{ week.start_date.day }}–{{ week.end_date.strftime('%b') }} {{ week.end_date.day }} · {{ week.achievements }} achievements · {{ week.active_days }} active days">
+                            <i style="--rise-level: {{ '%.1f'|format(week.relative_percent) }}%"><em>{{ week.achievements }}</em></i>
+                            <span>W{{ week.week }}</span>
+                          </p>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    <div class="comeback-return">
+                      <span>Activity returned</span>
+                      <strong>{% if highlight.return_date %}{{ highlight.return_date }}{% else %}And the year moved again{% endif %}</strong>
+                    </div>
+                  </div>
+                {% else %}
+                  <div class="special-ratio">
+                    <strong>{{ highlight.primary }}</strong>
+                    <span>{{ highlight.primary_label }}</span>
+                    {% if card.variant == "mastery_sprint" %}<time>{{ highlight.date_label }}</time>{% endif %}
+                  </div>
+                {% endif %}
+                {% if card.variant == "mastery_sprint" and card.headline_data.masteries %}
+                  <div class="special-mastery-games" style="--special-mastery-columns: {% if card.headline_data.masteries|length < 7 %}{{ card.headline_data.masteries|length }}{% else %}6{% endif %}">
+                    {% for mastery in card.headline_data.masteries %}
+                      <article>
+                        {% if mastery.image %}<img src="{{ mastery.image }}" alt="{{ mastery.game_title }}" />{% endif %}
+                        <div><span>{{ mastery.awarded_at.strftime("%b") }} {{ mastery.awarded_at.day }}</span><h3>{{ mastery.game_title|replace('~Homebrew~ ', '') }}</h3></div>
+                      </article>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                {% if highlight.facts %}
+                  {% if highlight.conversion %}
+                  <div class="special-conversion" aria-label="{{ card.headline_data.hardcore_points }} points became {{ card.headline_data.retro_points }} RetroPoints">
+                    <p><span>{{ highlight.facts[0].label }}</span><strong>{{ highlight.facts[0].value }}</strong></p>
+                    <b aria-hidden="true">→</b>
+                    <p class="is-result"><span>{{ highlight.facts[1].label }}</span><strong>{{ highlight.facts[1].value }}</strong></p>
+                  </div>
+                  {% else %}
+                    <div class="special-facts">
+                      {% for fact in highlight.facts %}
+                        <p><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></p>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
                 {% endif %}
               </div>
 
             {% elif card.type == "year_over_year" %}
               <div class="growth-layout">
                 <p class="wrapped-overline">{{ card.headline_data.previous_wrapped_year }} → {{ plan.wrapped_year }}</p>
-                <h2 id="story-title-{{ loop.index }}">Everything got bigger.</h2>
+                {% if card.variant == "big_growth" %}
+                  <h2 id="story-title-{{ loop.index }}">A major step up.</h2>
+                {% elif card.variant == "moderate_growth" %}
+                  <h2 id="story-title-{{ loop.index }}">The year gained momentum.</h2>
+                {% elif card.variant == "similar_year" %}
+                  <h2 id="story-title-{{ loop.index }}">A familiar pace.</h2>
+                {% elif card.variant == "mixed_year_over_year" %}
+                  <h2 id="story-title-{{ loop.index }}">Some gains. Some giveback.</h2>
+                {% else %}
+                  <h2 id="story-title-{{ loop.index }}">A quieter year.</h2>
+                {% endif %}
                 <div class="growth-list">
                   {% for key, label in [("hardcore_achievements", "Achievements"), ("retro_points", "RetroPoints"), ("active_days", "Active days"), ("progress_games", "Games")] %}
                     {% set change = card.supporting_data.changes[key] %}
-                    <p><span>{{ label }}</span><strong>{{ "{:,}".format(change.previous) }} <i>→</i> {{ "{:,}".format(change.current) }}</strong><b>+{{ "%.1f"|format(change.percent_change) }}%</b></p>
+                    <p><span>{{ label }}</span><strong>{{ "{:,}".format(change.previous) }} <i>→</i> {{ "{:,}".format(change.current) }}</strong><b{% if change.percent_change is none or change.percent_change == 0 %} class="is-flat"{% elif change.percent_change < 0 %} class="is-down"{% endif %}>{% if change.percent_change is none %}—{% elif change.percent_change > 0 %}+{% endif %}{% if change.percent_change is not none %}{{ "%.1f"|format(change.percent_change) }}%{% endif %}</b></p>
                   {% endfor %}
                 </div>
               </div>
