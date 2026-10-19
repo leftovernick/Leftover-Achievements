@@ -17,6 +17,7 @@ WEEKDAY_LABELS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 MONTH_LABELS = ("January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December")
 RA_BASE_URL = "https://retroachievements.org"
+AGGREGATION_VERSION = 2
 
 
 def parse_date(value):
@@ -41,28 +42,50 @@ def month_ranges(joined, now):
 
 
 def daily_points(achievements, start, end, calendar_timezone=None):
-    """Aggregate daily totals in local time by default, or in an explicit timezone."""
+    """Aggregate unlocks without changing the legacy Hardcore-only chart totals.
+
+    Mode-tagged unlock facts are retained for Wrapped. A later Wrapped pass can
+    then collapse a Casual/Softcore unlock followed by its Hardcore upgrade
+    without inflating the annual achievement count.
+    """
     days = {}
     seen = set()
     for achievement in achievements:
-        if achievement.get("HardcoreMode", achievement.get("hardcoreMode")) not in (1, "1", True):
-            continue
         earned = parse_date(achievement.get("Date") or achievement.get("date"))
         if not start <= earned <= end:
             continue
+        hardcore = achievement.get("HardcoreMode", achievement.get("hardcoreMode")) in (1, "1", True)
         achievement_id = achievement.get("AchievementID") or achievement.get("achievementId")
         if achievement_id is not None:
-            if achievement_id in seen:
+            achievement_id = int(achievement_id)
+            dedupe_key = (achievement_id, hardcore)
+            if dedupe_key in seen:
                 continue
-            seen.add(achievement_id)
+            seen.add(dedupe_key)
         calendar_time = earned.astimezone(calendar_timezone) if calendar_timezone else earned.astimezone()
         day = calendar_time.date().isoformat()
-        row = days.setdefault(day, {"hardcore_points": 0, "retro_points": 0,
-                                    "achievements_earned": 0, "games": {}})
-        row["hardcore_points"] += int(achievement.get("Points") or achievement.get("points") or 0)
-        row["retro_points"] += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
-        row["achievements_earned"] += 1
+        row = days.setdefault(day, {"hardcore_points": 0, "softcore_points": 0, "retro_points": 0,
+                                    "achievements_earned": 0,
+                                    "softcore_achievements_earned": 0,
+                                    "unlock_events": [], "games": {}})
+        points = int(achievement.get("Points") or achievement.get("points") or 0)
+        retro_points = int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
         game_id = int(achievement.get("GameID") or achievement.get("gameId") or 0)
+        row["unlock_events"].append({
+            "achievement_id": achievement_id,
+            "hardcore": hardcore,
+            "earned_at": earned.isoformat(),
+            "game_id": game_id,
+            "points": points,
+            "retro_points": retro_points,
+        })
+        if hardcore:
+            row["hardcore_points"] += points
+            row["retro_points"] += retro_points
+            row["achievements_earned"] += 1
+        else:
+            row["softcore_points"] += points
+            row["softcore_achievements_earned"] += 1
         if game_id:
             game_image = achievement.get("GameIcon") or achievement.get("gameIcon")
             game = row["games"].setdefault(game_id, {
@@ -71,16 +94,21 @@ def daily_points(achievements, start, end, calendar_timezone=None):
                 "game_image": urljoin(RA_BASE_URL, game_image) if game_image else None,
                 "console": achievement.get("ConsoleName") or achievement.get("consoleName"),
                 "achievements_earned": 0,
+                "softcore_achievements_earned": 0,
                 "hardcore_points": 0,
+                "softcore_points": 0,
                 "retro_points": 0,
             })
-            game["achievements_earned"] += 1
-            game["hardcore_points"] += int(achievement.get("Points") or achievement.get("points") or 0)
-            game["retro_points"] += int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0)
-        points = int(achievement.get("Points") or achievement.get("points") or 0)
-        if points > 0 and (not row.get("first_achievement_at") or earned < parse_date(row["first_achievement_at"])):
+            if hardcore:
+                game["achievements_earned"] += 1
+                game["hardcore_points"] += points
+                game["retro_points"] += retro_points
+            else:
+                game["softcore_points"] += points
+                game["softcore_achievements_earned"] += 1
+        if hardcore and points > 0 and (not row.get("first_achievement_at") or earned < parse_date(row["first_achievement_at"])):
             row.update(first_achievement_at=earned.isoformat(), first_hardcore_points=points,
-                       first_retro_points=int(achievement.get("TrueRatio") or achievement.get("trueRatio") or 0))
+                       first_retro_points=retro_points)
     for row in days.values():
         row["games"] = sorted(row["games"].values(), key=lambda game: game["game_title"].lower())
     return days
@@ -146,8 +174,16 @@ def week_stats(profile, months, start, end):
                 if "games" not in values:
                     return None
                 for game in values["games"]:
+                    if not any(int(game.get(field) or 0) for field in (
+                        "achievements_earned", "hardcore_points", "retro_points",
+                    )):
+                        continue
                     combined = games.setdefault(game["game_id"], {
-                        **game, "achievements_earned": 0, "hardcore_points": 0, "retro_points": 0,
+                        "game_id": game["game_id"],
+                        "game_title": game["game_title"],
+                        "game_image": game.get("game_image"),
+                        "console": game.get("console"),
+                        "achievements_earned": 0, "hardcore_points": 0, "retro_points": 0,
                     })
                     for field in ("achievements_earned", "hardcore_points", "retro_points"):
                         combined[field] += int(game.get(field) or 0)
@@ -229,6 +265,8 @@ class AllTimeCharts:
         if not row or row.get("days") is None:
             return False
         if row.get("utc_days") is None:
+            return False
+        if int(row.get("aggregation_version") or 1) < AGGREGATION_VERSION:
             return False
         if any("games" not in values for values in row["days"].values()):
             return False
@@ -376,7 +414,9 @@ class AllTimeCharts:
                 days = daily_points(achievements, start, end)
                 utc_days = daily_points(achievements, start, end, timezone.utc)
                 points = {field: sum(day[field] for day in days.values()) for field in ("hardcore_points", "retro_points")}
-                self.db.save_all_time_chart_month(key, month.date().isoformat(), points, end, days, utc_days)
+                self.db.save_all_time_chart_month(
+                    key, month.date().isoformat(), points, end, days, utc_days, AGGREGATION_VERSION,
+                )
                 self.progress["completed"] += 1
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError, KeyError) as exc:
                 logger.warning("Could not backfill all-time chart for %s during %s: %s: %s", username, month.date(), type(exc).__name__, exc)

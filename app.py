@@ -1391,29 +1391,42 @@ async def process_achievement_unlocks_for_user(username: str, recent_minutes: in
 async def process_game_awards_for_user(username: str):
     beaten_initialized = db.beaten_game_poll_initialized(username)
     mastery_initialized = db.mastery_poll_initialized(username)
+    completion_initialized = db.completion_poll_initialized(username)
     try:
         awards = await ra_client.hardcore_game_awards(
             username,
-            fetch_all=not beaten_initialized or not mastery_initialized,
+            fetch_all=not beaten_initialized or not mastery_initialized or not completion_initialized,
         )
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
         logger.warning("Could not poll game awards for %s: %s: %s", username, type(exc).__name__, exc)
         return
 
     beaten_games = sorted(awards["beaten"], key=lambda beaten_game: beaten_game["awarded_at"])
+    completions = sorted(awards.get("completions", []), key=lambda completion: completion["awarded_at"])
     masteries = sorted(awards["masteries"], key=lambda mastery: mastery["awarded_at"])
     db.update_recorded_mastery_titles(masteries)
     db.update_recorded_beaten_metadata(beaten_games)
 
-    if not beaten_initialized:
+    if not beaten_initialized or not completion_initialized:
         db.save_processed_beaten_game_events(beaten_games, announced=False)
+    if not beaten_initialized:
         db.mark_beaten_game_poll_initialized(username)
 
     if not mastery_initialized:
         db.save_processed_mastery_events(masteries, announced=False)
         db.mark_mastery_poll_initialized(username)
 
-    if not beaten_initialized or not mastery_initialized:
+    db.save_processed_completion_events(completions)
+    # Softcore and higher-tier records are retained for Wrapped, but they are
+    # not normal app beat events and must never produce weekly counts or alerts.
+    db.save_processed_beaten_game_events(
+        [game for game in beaten_games if game.get("source_award_kind") != "beaten-hardcore"],
+        announced=False,
+    )
+    if not completion_initialized:
+        db.mark_completion_poll_initialized(username)
+
+    if not beaten_initialized or not mastery_initialized or not completion_initialized:
         return
 
     profile_cache = db.get_user_profiles()
@@ -1421,7 +1434,8 @@ async def process_game_awards_for_user(username: str):
     new_beaten_games = [
         beaten_game
         for beaten_game in beaten_games
-        if not db.beaten_game_event_seen(username, beaten_game["game_id"])
+        if beaten_game.get("source_award_kind") == "beaten-hardcore"
+        and not db.beaten_game_event_seen(username, beaten_game["game_id"])
     ]
     new_masteries = [mastery for mastery in masteries if not db.mastery_event_seen(mastery["dedupe_key"])]
 
@@ -1821,7 +1835,7 @@ def history_wrapped_context(user: dict | None) -> dict:
         if (
             summary.status != "final"
             or not summary.coverage.complete
-            or summary.headline.hardcore_achievements == 0
+            or summary.headline.total_achievements == 0
         ):
             continue
         plan = selector.build_plan(summary)
@@ -1973,7 +1987,7 @@ def wrapped_user_year_context(username: str, wrapped_year: int) -> dict:
         summary is None
         or summary.status != "final"
         or not summary.coverage.complete
-        or summary.headline.hardcore_achievements == 0
+        or summary.headline.total_achievements == 0
     ):
         raise HTTPException(status_code=404, detail=f"Completed Wrapped {wrapped_year} is not available")
     previous = next((
@@ -1981,7 +1995,7 @@ def wrapped_user_year_context(username: str, wrapped_year: int) -> dict:
         if item.wrapped_year < wrapped_year
         and item.status == "final"
         and item.coverage.complete
-        and item.headline.hardcore_achievements > 0
+        and item.headline.total_achievements > 0
     ), None)
     plan = selector.build_plan(summary, previous)
     if plan is None:
@@ -2005,7 +2019,7 @@ def wrapped_prototype_context(wrapped_year: int) -> dict:
                 if item.wrapped_year < wrapped_year
                 and item.status == "final"
                 and item.coverage.complete
-                and item.headline.hardcore_achievements > 0
+                and item.headline.total_achievements > 0
             ), None)
             plan = WrappedStorySelector().build_plan(
                 summary,

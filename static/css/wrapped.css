@@ -362,7 +362,7 @@ button, a { font: inherit; }
 .headline-total h2 { margin: 0; max-width: 1100px; font-size: clamp(2rem, 5cqw, 5.4rem); line-height: 0.95; }
 .headline-total h2 > span { display: block; }
 .mega-number { color: var(--wrapped-red); font-size: clamp(8rem, 28cqw, 25rem); font-weight: 950; line-height: 0.7; letter-spacing: -0.09em; }
-.support-pair { display: flex; flex-wrap: wrap; gap: clamp(38px, 9cqw, 140px); margin-top: clamp(45px, 9cqh, 90px); }
+.support-pair { display: flex; flex-wrap: wrap; gap: clamp(38px, 9cqw, 140px); margin-top: clamp(28px, 5cqh, 54px); }
 .support-pair p { display: grid; margin: 0; }
 .support-pair strong { font-size: clamp(2.2rem, 6cqw, 5.8rem); line-height: 1; }
 .support-pair span { margin-top: 6px; color: var(--wrapped-muted); font-size: 0.9rem; text-transform: uppercase; }
@@ -743,11 +743,12 @@ button, a { font: inherit; }
 .recap-stats .recap-stat--completion { grid-column: span 3; border-top: 1px solid var(--wrapped-line); }
 .recap-stats strong { display: block; font-size: clamp(1.8rem, 4.2cqw, 3.8rem); line-height: 1; letter-spacing: -0.05em; }
 .recap-stats span { color: var(--wrapped-muted); font-size: 0.68rem; text-transform: uppercase; }
-.recap-stats .recap-points { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 18px; padding: 12px 0; border-top: 1px solid var(--wrapped-line); }
+.recap-stats .recap-points { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); padding: 12px 0; border-top: 1px solid var(--wrapped-line); }
+.recap-stats .recap-points .recap-point { gap: 5px; padding: 0 16px; }
+.recap-stats .recap-points .recap-point:first-child { padding-left: 0; }
+.recap-stats .recap-points .recap-point + .recap-point { border-left: 1px solid var(--wrapped-line); }
 .recap-stats .recap-points span { font-weight: 800; letter-spacing: 0.05em; }
-.recap-stats .recap-points span small { font-size: 1em; }
-.recap-stats .recap-points strong { font-size: clamp(1.05rem, 1.8cqw, 1.45rem); letter-spacing: -0.02em; white-space: nowrap; }
-.recap-stats .recap-points strong small { color: var(--wrapped-muted); font-size: 1em; }
+.recap-stats .recap-points strong { font-size: clamp(1.25rem, 2.3cqw, 1.9rem); letter-spacing: -0.03em; white-space: nowrap; }
 .recap-leaders { grid-column: 1 / 8; display: grid; grid-template-columns: 1.5fr 1fr 1fr; align-self: end; gap: 24px; margin: 0 0 14px; }
 .recap-leaders div { min-width: 0; }
 .recap-leaders dt { margin-bottom: 7px; color: var(--wrapped-muted); font-size: 0.57rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -1076,9 +1077,9 @@ button, a { font: inherit; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats { grid-column: 1 / -1; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-right: 0; margin-bottom: 18px; margin-left: 0; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats p { gap: 10px; padding: 13px 5px 13px 0; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats strong { font-size: clamp(2rem, 10cqw, 2.8rem); }
-  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px 14px; padding: 14px 0; }
-  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points span { line-height: 1.35; }
-  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points strong { font-size: clamp(1rem, 4.7cqw, 1.28rem); text-align: right; }
+  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 0; padding: 14px 0; }
+  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points .recap-point { gap: 5px; padding: 0 10px; }
+  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points strong { font-size: clamp(1.05rem, 4.7cqw, 1.4rem); }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; gap: 18px 14px; margin-bottom: 18px; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders div:first-child { grid-column: 1 / -1; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders dd { font-size: 1rem; }
@@ -1107,7 +1108,8 @@ button, a { font: inherit; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats p { gap: 6px; padding: 8px 2px 7px 0; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats strong { font-size: clamp(1.45rem, 7cqw, 2rem); }
   .wrapped-story > .wrapped-card--final_recap .recap-stats span { font-size: 0.48rem; }
-  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 8px 0; }
+  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 0; padding: 8px 0; }
+  .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points .recap-point { gap: 3px; padding: 0 6px; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points span { font-size: 0.52rem; }
   .wrapped-story > .wrapped-card--final_recap .recap-stats .recap-points strong { font-size: clamp(0.82rem, 3.8cqw, 1.05rem); }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders { grid-row: 5; grid-template-columns: 1.35fr 0.85fr 1fr; gap: 9px; margin: 0 0 7px; }

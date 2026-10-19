@@ -58,6 +58,21 @@ def render(summary, plan, wrapped_history_url=None, **extra_context):
 
 
 class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
+    def mode_summary(self, hardcore: int, softcore: int):
+        rows = complete_rows()
+        active_date = date(2026, 1, 5)
+        game_data = game(1, "Mode Game", hardcore, hardcore * 5, hardcore * 10)
+        game_data["softcore_achievements_earned"] = softcore
+        game_data["softcore_points"] = softcore * 5
+        day_data = day(hardcore, hardcore * 5, hardcore * 10, [game_data])
+        day_data["softcore_achievements_earned"] = softcore
+        day_data["softcore_points"] = softcore * 5
+        rows[active_date.replace(day=1).isoformat()]["days"][active_date.isoformat()] = day_data
+        summary = WrappedService(FakeDatabase(rows)).generate_year(
+            "Player", 2026, datetime(2026, 11, 2, 12, tzinfo=timezone.utc),
+        )
+        return summary, WrappedStorySelector().build_plan(summary)
+
     async def test_development_route_renders_wrapped_template(self):
         summary_2024, plan_2024, _, _ = prototype_samples()
         with (
@@ -119,6 +134,38 @@ class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(markup.count("data-story-card"), len(plan.cards))
                 for story_card in plan.cards:
                     self.assertIn(f'data-card-type="{story_card.type}"', markup)
+
+    async def test_mode_specific_data_is_hidden_when_that_mode_is_unused(self):
+        softcore_summary, softcore_plan = self.mode_summary(0, 12)
+        softcore_markup = render(softcore_summary, softcore_plan)
+        softcore_story = softcore_markup.split('<main id="wrapped-story"', 1)[1].split("</main>", 1)[0]
+        self.assertIn('<span class="mega-number">12</span><span>achievements earned</span>', softcore_story)
+        self.assertNotIn("<span>Hardcore</span>", softcore_story)
+        self.assertNotIn("<span>Softcore</span>", softcore_story)
+        self.assertNotIn("Hardcore points", softcore_story)
+        self.assertNotIn("RetroPoints", softcore_story)
+        self.assertIn("Softcore points", softcore_story)
+
+        hardcore_summary, hardcore_plan = self.mode_summary(12, 0)
+        hardcore_markup = render(hardcore_summary, hardcore_plan)
+        hardcore_story = hardcore_markup.split('<main id="wrapped-story"', 1)[1].split("</main>", 1)[0]
+        self.assertIn('<span class="mega-number">12</span><span>achievements earned</span>', hardcore_story)
+        self.assertNotIn("<span>Hardcore</span>", hardcore_story)
+        self.assertNotIn("<span>Softcore</span>", hardcore_story)
+        self.assertNotIn("Softcore Points", hardcore_story)
+
+        mixed_summary, mixed_plan = self.mode_summary(7, 5)
+        mixed_markup = render(mixed_summary, mixed_plan)
+        mixed_story = mixed_markup.split('<main id="wrapped-story"', 1)[1].split("</main>", 1)[0]
+        self.assertIn('<span class="mega-number">12</span><span>achievements earned</span>', mixed_story)
+        self.assertNotIn("<span>Hardcore</span>", mixed_story)
+        self.assertNotIn("<span>Softcore</span>", mixed_story)
+        self.assertIn("Hardcore points", mixed_story)
+        self.assertIn("Softcore points", mixed_story)
+        mixed_recap = mixed_story.split('data-card-type="final_recap"', 1)[1]
+        self.assertIn('<strong>+35</strong><span>Hardcore Points</span>', mixed_recap)
+        self.assertIn('<strong>+70</strong><span>RetroPoints</span>', mixed_recap)
+        self.assertIn('<strong>+25</strong><span>Softcore Points</span>', mixed_recap)
 
     async def test_development_result_selector_groups_results_by_slide(self):
         _, _, summary, plan = prototype_samples()
@@ -276,9 +323,10 @@ class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
         recap.headline_data["hardcore_points"] = -25
         recap.headline_data["retro_points"] = 0
         markup = render(summary, plan).split('data-card-type="final_recap"', 1)[1]
-        self.assertIn('<strong>-25 <small>(0)</small></strong>', markup)
+        self.assertIn('<strong>-25</strong><span>Hardcore Points</span>', markup)
+        self.assertIn('<strong>0</strong><span>RetroPoints</span>', markup)
         self.assertNotIn("+-25", markup)
-        self.assertNotIn("(+0)", markup)
+        self.assertNotIn(">+0<", markup)
 
     async def test_year_over_year_copy_and_signs_follow_the_variant(self):
         _, _, summary, plan = prototype_samples()
@@ -437,8 +485,7 @@ class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Hardcore Points", recap_markup)
         self.assertIn("RetroPoints", recap_markup)
         self.assertIn("+600", recap_markup)
-        self.assertIn("(1,200)", recap_markup)
-        self.assertNotIn("(+1,200)", recap_markup)
+        self.assertIn('<strong>+1,200</strong><span>RetroPoints</span>', recap_markup)
         self.assertIn("Wrapped for", markup)
         self.assertIn(summary.canonical_username, markup)
 
@@ -499,15 +546,25 @@ class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Save for Stories", markup)
         self.assertIn("/static/vendor/html2canvas.min.js", markup)
 
-    async def test_final_recap_renders_all_five_headline_metrics(self):
+    async def test_final_recap_renders_only_nonzero_award_tiers(self):
         _, _, summary, plan = prototype_samples()
         recap = next(item for item in plan.cards if item.type == "final_recap")
         recap.headline_data["beaten"] = 7
+        recap.headline_data["completed"] = 3
+        recap.headline_data["masteries"] = 2
         recap_markup = render(summary, plan).split('data-card-type="final_recap"', 1)[1]
-        for label in ("achievements", "games", "active days", "beaten", "masteries"):
+        for label in ("achievements", "games", "active days", "beaten", "completed", "mastered"):
             self.assertIn(f"<span>{label}</span>", recap_markup)
-        self.assertEqual(recap_markup.count('<p class="recap-stat'), 5)
-        self.assertEqual(recap_markup.count('recap-stat--completion'), 2)
+        self.assertEqual(recap_markup.count('<p class="recap-stat'), 6)
+        self.assertEqual(recap_markup.count('recap-stat--completion'), 3)
+
+        recap.headline_data["beaten"] = 0
+        recap.headline_data["completed"] = 0
+        recap.headline_data["masteries"] = 0
+        zero_markup = render(summary, plan).split('data-card-type="final_recap"', 1)[1]
+        for label in ("beaten", "completed", "mastered"):
+            self.assertNotIn(f"<span>{label}</span>", zero_markup)
+        self.assertNotIn('recap-stat--completion', zero_markup)
 
     async def test_final_recap_marks_long_game_titles_for_compact_spacing(self):
         _, _, summary, plan = prototype_samples()

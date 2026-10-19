@@ -102,12 +102,16 @@ class GenreMetric:
 
 @dataclass
 class WrappedHeadline:
+    total_achievements: int = 0
     hardcore_achievements: int = 0
+    softcore_achievements: int = 0
     hardcore_points: int = 0
+    softcore_points: int = 0
     retro_points: int = 0
     active_days: int = 0
     games_with_progress: int = 0
     consoles_with_progress: int = 0
+    completed_games: int = 0
     mastered_games: int = 0
     observed_beaten_games: int = 0
     effective_beaten_games: int = 0
@@ -167,14 +171,17 @@ class WrappedGenres:
 
 @dataclass
 class WrappedAwards:
+    completed_games: int
+    completion_by_month: list[MonthMetric]
     mastered_games: int
     mastery_by_month: list[MonthMetric]
     mastery_reliability: Literal["more_reliable"]
     observed_beaten_games: int
     effective_beaten_games: int
+    completion_only_beaten_games: int
     mastery_only_beaten_games: int
     beaten_by_month_partial: list[MonthMetric]
-    beaten_reliability: Literal["partial_historical_coverage"]
+    beaten_reliability: Literal["stored_awards"]
 
     @property
     def beaten_games_partial(self) -> int:
@@ -214,6 +221,8 @@ class WrappedGameDetail:
     cover_image: str | None
     console: str | None
     achievements: int
+    hardcore_achievements: int
+    softcore_achievements: int
     hardcore_points: int
     retro_points: int
     active_days: int
@@ -225,6 +234,8 @@ class WrappedGameDetail:
 class WrappedDayDetail:
     date: date
     achievements: int
+    hardcore_achievements: int
+    softcore_achievements: int
     hardcore_points: int
     retro_points: int
     active_game_ids: tuple[int, ...]
@@ -234,10 +245,13 @@ class WrappedDayDetail:
 class WrappedMonthDetail:
     month: str
     achievements: int
+    hardcore_achievements: int
+    softcore_achievements: int
     hardcore_points: int
     retro_points: int
     active_days: int
     progress_game_ids: tuple[int, ...]
+    completions: int
     masteries: int
     beaten_partial: int
 
@@ -257,6 +271,7 @@ class WrappedDetails:
     games: list[WrappedGameDetail]
     days: list[WrappedDayDetail]
     months: list[WrappedMonthDetail]
+    completions: list[WrappedAwardDetail]
     masteries: list[WrappedAwardDetail]
     beaten_partial: list[WrappedAwardDetail]
 
@@ -565,10 +580,15 @@ def _canonicalize_days(days: dict[date, dict], metadata: dict[int, dict]) -> dic
             target = canonical_games.setdefault(canonical["game_id"], {
                 **canonical,
                 "achievements_earned": 0,
+                "hardcore_achievements_earned": 0,
+                "softcore_achievements_earned": 0,
                 "hardcore_points": 0,
                 "retro_points": 0,
             })
-            for field_name in ("achievements_earned", "hardcore_points", "retro_points"):
+            for field_name in (
+                "achievements_earned", "hardcore_achievements_earned",
+                "softcore_achievements_earned", "hardcore_points", "retro_points",
+            ):
                 target[field_name] += int(game.get(field_name) or 0)
         values["games"] = canonical_games
     return days
@@ -623,14 +643,21 @@ class WrappedService:
         if any(row.get("days") is not None and row.get("utc_days") is None for row in rows.values()):
             coverage.flags.append("utc_history_pending")
             coverage.notes.append("Wrapped UTC history is being rebuilt from RetroAchievements data.")
+        if any(
+            "aggregation_version" in row and int(row.get("aggregation_version") or 1) < 2
+            for row in rows.values()
+        ):
+            coverage.flags.append("softcore_history_pending")
+            coverage.notes.append("Wrapped Softcore history is being rebuilt from RetroAchievements data.")
         days = self._period_days(rows, period, now)
         raw_games = self._aggregate_games(days)
 
         required = _required_interval(period, member_since, now)
         award_end = required[1] if required else now
         masteries = _award_games(self.db.get_recorded_chart_masteries([username], award_end).get(username.lower(), []), period, now)
+        completions = _award_games(self.db.get_recorded_chart_completions([username], award_end).get(username.lower(), []), period, now)
         beaten = _award_games(self.db.get_recorded_chart_beaten_games([username], award_end).get(username.lower(), []), period, now)
-        award_game_ids = {int(award["game_id"]) for award in masteries + beaten}
+        award_game_ids = {int(award["game_id"]) for award in masteries + completions + beaten}
         metadata = self.db.get_game_metadata(set(raw_games) | award_game_ids)
         parent_game_ids = {
             int(details["parent_game_id"])
@@ -641,6 +668,7 @@ class WrappedService:
             metadata.update(self.db.get_game_metadata(parent_game_ids))
         days = _canonicalize_days(days, metadata)
         masteries = _canonicalize_awards(masteries, metadata)
+        completions = _canonicalize_awards(completions, metadata)
         beaten = _canonicalize_awards(beaten, metadata)
         games = self._aggregate_games(days)
         for game_id, game in games.items():
@@ -664,12 +692,17 @@ class WrappedService:
             coverage.flags.append("genre_metadata_incomplete")
             coverage.notes.append("Genre statistics include an unknown share for games without usable metadata.")
 
-        awards = self._awards(masteries, beaten, period)
-        coverage.flags.append("beaten_history_partial")
-        coverage.notes.append("Beaten history omits pre-tracking beaten transitions for games already mastered.")
+        awards = self._awards(masteries, completions, beaten, period)
 
         achievement_total = sum(int(values.get("achievements_earned") or 0) for values in days.values())
+        hardcore_achievement_total = sum(
+            int(values.get("hardcore_achievements_earned") or 0) for values in days.values()
+        )
+        softcore_achievement_total = sum(
+            int(values.get("softcore_achievements_earned") or 0) for values in days.values()
+        )
         point_total = sum(int(values.get("hardcore_points") or 0) for values in days.values())
+        softcore_point_total = sum(int(values.get("softcore_points") or 0) for values in days.values())
         retro_total = sum(int(values.get("retro_points") or 0) for values in days.values())
         first_activity = self._first_activity(days)
         last_day = max(days) if days else None
@@ -687,12 +720,16 @@ class WrappedService:
             generated_at=now,
             coverage=coverage,
             headline=WrappedHeadline(
-                hardcore_achievements=achievement_total,
+                total_achievements=achievement_total,
+                hardcore_achievements=hardcore_achievement_total,
+                softcore_achievements=softcore_achievement_total,
                 hardcore_points=point_total,
+                softcore_points=softcore_point_total,
                 retro_points=retro_total,
                 active_days=len(days),
                 games_with_progress=len(games),
                 consoles_with_progress=consoles.total_consoles,
+                completed_games=awards.completed_games,
                 mastered_games=awards.mastered_games,
                 observed_beaten_games=awards.observed_beaten_games,
                 effective_beaten_games=awards.effective_beaten_games,
@@ -706,7 +743,7 @@ class WrappedService:
                 first_activity=first_activity,
                 last_activity=ActivityBoundary(last_day) if last_day else None,
             ),
-            details=self._details(days, games, metadata, masteries, beaten, period),
+            details=self._details(days, games, metadata, masteries, completions, beaten, period),
         )
 
     def _user_cache(self, username: str) -> tuple[dict, dict[str, dict], str]:
@@ -730,7 +767,7 @@ class WrappedService:
     @staticmethod
     def _period_days(rows: dict[str, dict], period: WrappedPeriod, now: datetime) -> dict[date, dict]:
         end_date = min(period.end_date, now.astimezone(timezone.utc).date())
-        combined = {}
+        source_values = []
         # Wrapped follows RetroAchievements' UTC clock. Older caches temporarily
         # fall back to local days until their one-time UTC refresh completes.
         for row in rows.values():
@@ -741,35 +778,133 @@ class WrappedService:
                 day = date.fromisoformat(day_key)
                 if not period.start_date <= day <= end_date:
                     continue
+                source_values.append((day, values))
+
+        # Version 2 cache rows retain unlock identity and mode. Select one annual
+        # representation for each achievement: Hardcore supersedes Softcore, and
+        # duplicate events in the same mode use their earliest timestamp.
+        event_candidates = {}
+        game_catalog = {}
+        has_event_data = bool(source_values) and all("unlock_events" in values for _, values in source_values)
+        for source_day, values in source_values:
+            for game in values.get("games") or []:
+                game_id = int(game.get("game_id") or 0)
+                if game_id:
+                    game_catalog.setdefault(game_id, game)
+            if not has_event_data:
+                continue
+            for index, event in enumerate(values.get("unlock_events") or []):
+                earned = _parse_datetime(event.get("earned_at"))
+                event_day = earned.astimezone(timezone.utc).date()
+                if not period.start_date <= event_day <= end_date:
+                    continue
+                achievement_id = event.get("achievement_id")
+                key = ("achievement", int(achievement_id)) if achievement_id is not None else (
+                    "anonymous", event.get("earned_at"), event.get("game_id"), index,
+                )
+                normalized = {**event, "earned": earned, "day": event_day}
+                existing = event_candidates.get(key)
+                if existing is None or (
+                    bool(normalized.get("hardcore")), -earned.timestamp()
+                ) > (
+                    bool(existing.get("hardcore")), -existing["earned"].timestamp()
+                ):
+                    event_candidates[key] = normalized
+
+        combined = {}
+        if has_event_data:
+            for event in event_candidates.values():
+                day = event["day"]
+                hardcore = bool(event.get("hardcore"))
+                game_id = int(event.get("game_id") or 0)
                 target = combined.setdefault(day, {
-                    "hardcore_points": 0, "retro_points": 0,
-                    "achievements_earned": 0, "games": {},
+                    "hardcore_points": 0, "softcore_points": 0, "retro_points": 0,
+                    "achievements_earned": 0,
+                    "hardcore_achievements_earned": 0,
+                    "softcore_achievements_earned": 0,
+                    "games": {},
                 })
-                for field_name in ("hardcore_points", "retro_points", "achievements_earned"):
-                    target[field_name] += int(values.get(field_name) or 0)
-                for game in values.get("games") or []:
-                    game_id = int(game.get("game_id") or 0)
-                    if not game_id:
-                        continue
+                target["achievements_earned"] += 1
+                mode_field = "hardcore_achievements_earned" if hardcore else "softcore_achievements_earned"
+                target[mode_field] += 1
+                if hardcore:
+                    target["hardcore_points"] += int(event.get("points") or 0)
+                    target["retro_points"] += int(event.get("retro_points") or 0)
+                else:
+                    target["softcore_points"] += int(event.get("points") or 0)
+                if game_id:
+                    game = game_catalog.get(game_id, {})
                     merged = target["games"].setdefault(game_id, {
                         "game_id": game_id,
                         "game_title": game.get("game_title") or f"Game #{game_id}",
                         "game_image": game.get("game_image"),
                         "console": game.get("console"),
-                        "achievements_earned": 0, "hardcore_points": 0, "retro_points": 0,
+                        "achievements_earned": 0,
+                        "hardcore_achievements_earned": 0,
+                        "softcore_achievements_earned": 0,
+                        "hardcore_points": 0, "softcore_points": 0, "retro_points": 0,
                     })
-                    for field_name in ("achievements_earned", "hardcore_points", "retro_points"):
-                        merged[field_name] += int(game.get(field_name) or 0)
-                    merged["game_image"] = merged.get("game_image") or game.get("game_image")
-                    merged["console"] = merged.get("console") or game.get("console")
-                first_value = values.get("first_achievement_at")
-                if first_value:
-                    first = _parse_datetime(first_value)
-                    existing = target.get("first_achievement_at")
-                    if existing is None or first < existing:
-                        target["first_achievement_at"] = first
-                        target["first_hardcore_points"] = int(values.get("first_hardcore_points") or 0)
-                        target["first_retro_points"] = int(values.get("first_retro_points") or 0)
+                    merged["achievements_earned"] += 1
+                    merged[mode_field] += 1
+                    if hardcore:
+                        merged["hardcore_points"] += int(event.get("points") or 0)
+                        merged["retro_points"] += int(event.get("retro_points") or 0)
+                    else:
+                        merged["softcore_points"] += int(event.get("points") or 0)
+                first = target.get("first_achievement_at")
+                if first is None or event["earned"] < first:
+                    target["first_achievement_at"] = event["earned"]
+                    target["first_hardcore_points"] = int(event.get("points") or 0) if hardcore else 0
+                    target["first_retro_points"] = int(event.get("retro_points") or 0) if hardcore else 0
+            return combined
+
+        # Backward-compatible fallback while version 1 rows are being rebuilt.
+        for day, values in source_values:
+            target = combined.setdefault(day, {
+                "hardcore_points": 0, "softcore_points": 0, "retro_points": 0,
+                "achievements_earned": 0,
+                "hardcore_achievements_earned": 0,
+                "softcore_achievements_earned": 0,
+                "games": {},
+            })
+            hardcore_count = int(values.get("achievements_earned") or 0)
+            softcore_count = int(values.get("softcore_achievements_earned") or 0)
+            target["hardcore_points"] += int(values.get("hardcore_points") or 0)
+            target["softcore_points"] += int(values.get("softcore_points") or 0)
+            target["retro_points"] += int(values.get("retro_points") or 0)
+            target["hardcore_achievements_earned"] += hardcore_count
+            target["softcore_achievements_earned"] += softcore_count
+            target["achievements_earned"] += hardcore_count + softcore_count
+            for game in values.get("games") or []:
+                game_id = int(game.get("game_id") or 0)
+                if not game_id:
+                    continue
+                game_hardcore = int(game.get("achievements_earned") or 0)
+                game_softcore = int(game.get("softcore_achievements_earned") or 0)
+                merged = target["games"].setdefault(game_id, {
+                    "game_id": game_id,
+                    "game_title": game.get("game_title") or f"Game #{game_id}",
+                    "game_image": game.get("game_image"),
+                    "console": game.get("console"),
+                    "achievements_earned": 0,
+                    "hardcore_achievements_earned": 0,
+                    "softcore_achievements_earned": 0,
+                    "hardcore_points": 0, "softcore_points": 0, "retro_points": 0,
+                })
+                merged["achievements_earned"] += game_hardcore + game_softcore
+                merged["hardcore_achievements_earned"] += game_hardcore
+                merged["softcore_achievements_earned"] += game_softcore
+                merged["hardcore_points"] += int(game.get("hardcore_points") or 0)
+                merged["softcore_points"] += int(game.get("softcore_points") or 0)
+                merged["retro_points"] += int(game.get("retro_points") or 0)
+            first_value = values.get("first_achievement_at")
+            if first_value:
+                first = _parse_datetime(first_value)
+                existing = target.get("first_achievement_at")
+                if existing is None or first < existing:
+                    target["first_achievement_at"] = first
+                    target["first_hardcore_points"] = int(values.get("first_hardcore_points") or 0)
+                    target["first_retro_points"] = int(values.get("first_retro_points") or 0)
         return {day: values for day, values in combined.items() if values["achievements_earned"] > 0}
 
     @staticmethod
@@ -780,11 +915,18 @@ class WrappedService:
                 game_id = game["game_id"]
                 combined = games.setdefault(game_id, {
                     **game,
-                    "achievements_earned": 0, "hardcore_points": 0,
+                    "achievements_earned": 0,
+                    "hardcore_achievements_earned": 0,
+                    "softcore_achievements_earned": 0,
+                    "hardcore_points": 0,
+                    "softcore_points": 0,
                     "retro_points": 0, "active_days": 0,
                     "first_active_date": day,
                 })
-                for field_name in ("achievements_earned", "hardcore_points", "retro_points"):
+                for field_name in (
+                    "achievements_earned", "hardcore_achievements_earned",
+                    "softcore_achievements_earned", "hardcore_points", "softcore_points", "retro_points",
+                ):
                     combined[field_name] += int(game.get(field_name) or 0)
                 combined["active_days"] += 1
                 combined["game_image"] = combined.get("game_image") or game.get("game_image")
@@ -891,13 +1033,15 @@ class WrappedService:
         games: dict[int, dict],
         metadata: dict[int, dict],
         masteries: list[dict],
+        completions: list[dict],
         beaten: list[dict],
         period: WrappedPeriod,
     ) -> WrappedDetails:
         month_values = {
             month: {
-                "achievements": 0, "hardcore_points": 0, "retro_points": 0,
-                "active_days": 0, "game_ids": set(), "masteries": 0, "beaten": 0,
+                "achievements": 0, "hardcore_achievements": 0, "softcore_achievements": 0,
+                "hardcore_points": 0, "retro_points": 0,
+                "active_days": 0, "game_ids": set(), "completions": 0, "masteries": 0, "beaten": 0,
             }
             for month in _month_keys(period)
         }
@@ -906,6 +1050,8 @@ class WrappedService:
             month = day.replace(day=1).isoformat()
             target = month_values[month]
             target["achievements"] += int(values["achievements_earned"])
+            target["hardcore_achievements"] += int(values["hardcore_achievements_earned"])
+            target["softcore_achievements"] += int(values["softcore_achievements_earned"])
             target["hardcore_points"] += int(values["hardcore_points"])
             target["retro_points"] += int(values["retro_points"])
             target["active_days"] += 1
@@ -913,12 +1059,16 @@ class WrappedService:
             day_details.append(WrappedDayDetail(
                 date=day,
                 achievements=int(values["achievements_earned"]),
+                hardcore_achievements=int(values["hardcore_achievements_earned"]),
+                softcore_achievements=int(values["softcore_achievements_earned"]),
                 hardcore_points=int(values["hardcore_points"]),
                 retro_points=int(values["retro_points"]),
                 active_game_ids=tuple(sorted(values["games"])),
             ))
         for award in masteries:
             month_values[award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()]["masteries"] += 1
+        for award in completions:
+            month_values[award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()]["completions"] += 1
         for award in beaten:
             month_values[award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()]["beaten"] += 1
 
@@ -946,6 +1096,8 @@ class WrappedService:
                     cover_image=metadata.get(game_id, {}).get("image_box_art"),
                     console=game.get("console"),
                     achievements=int(game["achievements_earned"]),
+                    hardcore_achievements=int(game["hardcore_achievements_earned"]),
+                    softcore_achievements=int(game["softcore_achievements_earned"]),
                     hardcore_points=int(game["hardcore_points"]),
                     retro_points=int(game["retro_points"]),
                     active_days=int(game["active_days"]),
@@ -959,42 +1111,59 @@ class WrappedService:
                 WrappedMonthDetail(
                     month=month,
                     achievements=values["achievements"],
+                    hardcore_achievements=values["hardcore_achievements"],
+                    softcore_achievements=values["softcore_achievements"],
                     hardcore_points=values["hardcore_points"],
                     retro_points=values["retro_points"],
                     active_days=values["active_days"],
                     progress_game_ids=tuple(sorted(values["game_ids"])),
+                    completions=values["completions"],
                     masteries=values["masteries"],
                     beaten_partial=values["beaten"],
                 )
                 for month, values in month_values.items()
             ],
+            completions=[award_detail(award) for award in sorted(completions, key=lambda item: item["awarded"])],
             masteries=[award_detail(award) for award in sorted(masteries, key=lambda item: item["awarded"])],
             beaten_partial=[award_detail(award) for award in sorted(beaten, key=lambda item: item["awarded"])],
         )
 
     @staticmethod
-    def _awards(masteries: list[dict], beaten: list[dict], period: WrappedPeriod) -> WrappedAwards:
+    def _awards(masteries: list[dict], completions: list[dict], beaten: list[dict], period: WrappedPeriod) -> WrappedAwards:
         months = _month_keys(period)
+        completion_counts = {month: 0 for month in months}
         mastery_counts = {month: 0 for month in months}
         beaten_counts = {month: 0 for month in months}
+        mastered_game_ids = {int(award["game_id"]) for award in masteries}
+        raw_completed_game_ids = {int(award["game_id"]) for award in completions}
+        completed_game_ids = raw_completed_game_ids - mastered_game_ids
+        observed_beaten_game_ids = {int(award["game_id"]) for award in beaten}
+        wrapped_beaten_game_ids = observed_beaten_game_ids - raw_completed_game_ids - mastered_game_ids
         for award in masteries:
             target = award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()
             mastery_counts[target] += 1
+        for award in completions:
+            if int(award["game_id"]) not in completed_game_ids:
+                continue
+            target = award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()
+            completion_counts[target] += 1
         for award in beaten:
+            if int(award["game_id"]) not in wrapped_beaten_game_ids:
+                continue
             target = award["awarded"].astimezone(timezone.utc).date().replace(day=1).isoformat()
             beaten_counts[target] += 1
-        mastered_game_ids = {int(award["game_id"]) for award in masteries}
-        observed_beaten_game_ids = {int(award["game_id"]) for award in beaten}
-        effective_beaten_game_ids = observed_beaten_game_ids | mastered_game_ids
         return WrappedAwards(
+            completed_games=len(completed_game_ids),
+            completion_by_month=[MonthMetric(month, completion_counts[month]) for month in months],
             mastered_games=len(mastered_game_ids),
             mastery_by_month=[MonthMetric(month, mastery_counts[month]) for month in months],
             mastery_reliability="more_reliable",
             observed_beaten_games=len(observed_beaten_game_ids),
-            effective_beaten_games=len(effective_beaten_game_ids),
-            mastery_only_beaten_games=len(mastered_game_ids - observed_beaten_game_ids),
+            effective_beaten_games=len(wrapped_beaten_game_ids),
+            completion_only_beaten_games=0,
+            mastery_only_beaten_games=0,
             beaten_by_month_partial=[MonthMetric(month, beaten_counts[month]) for month in months],
-            beaten_reliability="partial_historical_coverage",
+            beaten_reliability="stored_awards",
         )
 
     @staticmethod

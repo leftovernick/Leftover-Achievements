@@ -21,9 +21,10 @@ class RecordedHistoryAwardTests(unittest.TestCase):
         self.db_patch.stop()
         self.directory.cleanup()
 
-    def beaten(self, game_id, awarded_at, username="Player", announced=True):
+    def beaten(self, game_id, awarded_at, username="Player", announced=True, source="beaten-hardcore"):
         db.save_processed_beaten_game_event(
-            {"username": username, "game_id": game_id, "awarded_at": awarded_at},
+            {"username": username, "game_id": game_id, "awarded_at": awarded_at,
+             "source_award_kind": source},
             announced=announced,
         )
 
@@ -48,6 +49,17 @@ class RecordedHistoryAwardTests(unittest.TestCase):
         self.assertEqual(
             db.get_recorded_history_award_counts(self.start, self.end, ["Player"]),
             {"beaten": 0, "masteries": 1},
+        )
+
+    def test_weekly_history_excludes_wrapped_only_softcore_awards(self):
+        self.beaten(20, "2026-09-08T12:00:00Z", source="beaten-softcore")
+        self.beaten(21, "2026-09-09T12:00:00Z", source="completed")
+        self.beaten(22, "2026-09-10T12:00:00Z", source="mastered")
+        self.beaten(23, "2026-09-11T12:00:00Z", source="beaten-hardcore")
+
+        self.assertEqual(
+            db.get_recorded_history_award_counts(self.start, self.end, ["Player"]),
+            {"beaten": 1, "masteries": 0},
         )
 
     def test_empty_roster_returns_zero_recorded_awards(self):

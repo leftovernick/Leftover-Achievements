@@ -17,7 +17,13 @@ def wrapped_summaries():
         wrapped_year=2023,
         period_start=date(2022, 11, 1),
         period_end=date(2023, 10, 31),
-        headline=replace(summary_2024.headline, hardcore_achievements=0, games_with_progress=0),
+        headline=replace(
+            summary_2024.headline,
+            total_achievements=0,
+            hardcore_achievements=0,
+            softcore_achievements=0,
+            games_with_progress=0,
+        ),
     )
     current_2026 = replace(
         summary_2025,
@@ -44,6 +50,45 @@ class HistoryWrappedTests(unittest.IsolatedAsyncioTestCase):
             [entry["summary"].wrapped_year for entry in context["completed"]],
             [2026, 2025, 2024],
         )
+
+    def test_softcore_only_year_is_available_and_uses_combined_total(self):
+        summary, _, _, _ = prototype_samples()
+        softcore_only = replace(
+            summary,
+            headline=replace(
+                summary.headline,
+                total_achievements=1_539,
+                hardcore_achievements=0,
+                softcore_achievements=1_539,
+            ),
+        )
+        with patch.object(application.WrappedService, "generate_for_user", return_value=[softcore_only]):
+            context = application.history_wrapped_context({"ra_username": "Leocanta"})
+            direct = application.wrapped_user_year_context("Leocanta", softcore_only.wrapped_year)
+
+        self.assertEqual([entry["summary"] for entry in context["completed"]], [softcore_only])
+        self.assertEqual(direct["summary"], softcore_only)
+
+        markup = application.templates.get_template("history.html").render(
+            weeks=[],
+            weeks_page_size=5,
+            has_more_weeks=False,
+            selected_week_start=None,
+            selected_week_label="No completed weeks",
+            rankings=[],
+            played_game_users=[],
+            summary={
+                "achievements_display": "0", "hardcore_points_display": "0",
+                "retro_points_display": "0", "beaten_display": "—", "masteries_display": "—",
+            },
+            backfill_pending=False,
+            history_users=[{"ra_username": "Leocanta", "display_name": "Leocanta"}],
+            selected_history_user={"ra_username": "Leocanta", "display_name": "Leocanta"},
+            wrapped_in_progress=context["in_progress"],
+            wrapped_completed=context["completed"],
+        )
+        self.assertIn("1,539", markup)
+        self.assertIn(f'/history/wrapped/{softcore_only.wrapped_year}?user=Leocanta', markup)
 
     def test_selected_history_user_is_exact_and_does_not_fall_through(self):
         users = [

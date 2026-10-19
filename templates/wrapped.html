@@ -84,11 +84,14 @@
 
             {% elif card.type == "headline_totals" %}
               <div class="headline-total">
-                <h2 id="story-title-{{ loop.index }}"><span class="mega-number">{{ "{:,}".format(card.headline_data.hardcore_achievements) }}</span><span>hardcore achievements</span></h2>
-                <div class="support-pair">
-                  <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
-                  <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
-                </div>
+                <h2 id="story-title-{{ loop.index }}"><span class="mega-number">{{ "{:,}".format(card.headline_data.total_achievements) }}</span><span>achievements earned</span></h2>
+                {% if card.headline_data.hardcore_points or card.headline_data.softcore_points %}
+                  <div class="support-pair">
+                    {% if card.headline_data.hardcore_points %}<p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>Hardcore points</span></p>{% endif %}
+                    {% if card.headline_data.hardcore_points %}<p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>{% endif %}
+                    {% if card.headline_data.softcore_points %}<p><strong>{{ "{:,}".format(card.headline_data.softcore_points) }}</strong><span>Softcore points</span></p>{% endif %}
+                  </div>
+                {% endif %}
               </div>
 
             {% elif card.type == "year_at_a_glance" %}
@@ -121,8 +124,10 @@
                   {% if card.variant == "split_leaders" %}<p class="metric-sweep split">Different games led different metrics</p>{% endif %}
                   <div class="game-metrics">
                     <p><strong>{{ card.headline_data.achievements }}</strong><span>achievements</span></p>
-                    <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
-                    <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                    {% if card.supporting_data.has_hardcore %}
+                      <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
+                      <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                    {% endif %}
                     <p><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
                   </div>
                 </div>
@@ -210,7 +215,7 @@
                 <div class="console-facts">
                   <p><strong>{{ "{:,}".format(card.supporting_data.top_console_values.achievements) }}</strong><span>achievements</span></p>
                   <p><strong>{{ card.supporting_data.top_console_values.progress_games }}</strong><span>progress-games</span></p>
-                  {% if card.supporting_data.console_sweep %}<p class="sweep-stamp">Led achievements earned<br />games played · points</p>{% endif %}
+                  {% if card.supporting_data.console_sweep %}<p class="sweep-stamp">Led achievements earned<br />games played{% if card.supporting_data.has_hardcore %} · points{% endif %}</p>{% endif %}
                   {% if card.supporting_data.split_console_leaders %}
                     <div class="console-split">
                       <span>Split leaders</span>
@@ -258,11 +263,13 @@
               </div>
               <div class="month-notes">
                 <p><span>Most achievements</span><strong>{{ month_names[card.headline_data.busiest_month[5:7]] }} · {{ busiest_month_data.achievements }}</strong></p>
-                {% if card.supporting_data.biggest_points_month == card.supporting_data.biggest_retro_points_month %}
-                  <p><span>Most points + RetroPoints</span><strong>{{ month_names[card.supporting_data.biggest_points_month[5:7]] }}</strong></p>
-                {% else %}
-                  <p><span>Most points</span><strong>{{ month_names[card.supporting_data.biggest_points_month[5:7]] }}</strong></p>
-                  <p><span>Most RetroPoints</span><strong>{{ month_names[card.supporting_data.biggest_retro_points_month[5:7]] }}</strong></p>
+                {% if card.supporting_data.has_hardcore %}
+                  {% if card.supporting_data.biggest_points_month == card.supporting_data.biggest_retro_points_month %}
+                    <p><span>Most points + RetroPoints</span><strong>{{ month_names[card.supporting_data.biggest_points_month[5:7]] }}</strong></p>
+                  {% else %}
+                    <p><span>Most points</span><strong>{{ month_names[card.supporting_data.biggest_points_month[5:7]] }}</strong></p>
+                    <p><span>Most RetroPoints</span><strong>{{ month_names[card.supporting_data.biggest_retro_points_month[5:7]] }}</strong></p>
+                  {% endif %}
                 {% endif %}
               </div>
 
@@ -282,10 +289,12 @@
                   <p class="wrapped-overline">The year’s biggest day</p>
                   <h2 id="story-title-{{ loop.index }}"><span>{{ card.headline_data.achievements }}</span> achievements</h2>
                   <p class="wrapped-deck">Across {{ card.headline_data.games_active }} game{% if card.headline_data.games_active != 1 %}s{% endif %}</p>
-                  <div class="day-metrics" aria-label="Points earned that day">
-                    <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
-                    <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
-                  </div>
+                  {% if card.supporting_data.has_hardcore %}
+                    <div class="day-metrics" aria-label="Points earned that day">
+                      <p><strong>{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>points</span></p>
+                      <p><strong>{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                    </div>
+                  {% endif %}
                   <div class="mini-cover-row">
                     {% for game in card.supporting_data.active_games[:7] %}
                       {% if game.image %}<figure><img src="{{ game.image }}" alt="{{ game.title }}" title="{{ game.title }}" /></figure>{% endif %}
@@ -460,10 +469,14 @@
                   <h2 id="story-title-{{ loop.index }}">A quieter year.</h2>
                 {% endif %}
                 <div class="growth-list">
-                  {% for key, label in [("hardcore_achievements", "Achievements"), ("retro_points", "RetroPoints"), ("active_days", "Active days"), ("progress_games", "Games")] %}
+                  {% for key, label in [("hardcore_achievements", "Achievements"), ("active_days", "Active days"), ("progress_games", "Games")] %}
                     {% set change = card.supporting_data.changes[key] %}
                     <p><span>{{ label }}</span><strong>{{ "{:,}".format(change.previous) }} <i>→</i> {{ "{:,}".format(change.current) }}</strong><b{% if change.percent_change is none or change.percent_change == 0 %} class="is-flat"{% elif change.percent_change < 0 %} class="is-down"{% endif %}>{% if change.percent_change is none %}—{% elif change.percent_change > 0 %}+{% endif %}{% if change.percent_change is not none %}{{ "%.1f"|format(change.percent_change) }}%{% endif %}</b></p>
                   {% endfor %}
+                  {% if "retro_points" in card.supporting_data.changes %}
+                    {% set change = card.supporting_data.changes.retro_points %}
+                    <p><span>RetroPoints</span><strong>{{ "{:,}".format(change.previous) }} <i>→</i> {{ "{:,}".format(change.current) }}</strong><b{% if change.percent_change is none or change.percent_change == 0 %} class="is-flat"{% elif change.percent_change < 0 %} class="is-down"{% endif %}>{% if change.percent_change is none %}—{% elif change.percent_change > 0 %}+{% endif %}{% if change.percent_change is not none %}{{ "%.1f"|format(change.percent_change) }}%{% endif %}</b></p>
+                  {% endif %}
                 </div>
               </div>
 
@@ -488,13 +501,24 @@
                   <p><span>Wrapped for</span><strong>{{ summary.canonical_username }}</strong></p>
                 </div>
                 <div class="recap-stats">
-                  <p class="recap-stat"><strong>{{ "{:,}".format(card.headline_data.hardcore_achievements) }}</strong><span>achievements</span></p>
+                  <p class="recap-stat"><strong>{{ "{:,}".format(card.headline_data.total_achievements) }}</strong><span>achievements</span></p>
                   <p class="recap-stat"><strong>{{ card.headline_data.progress_games }}</strong><span>games</span></p>
                   <p class="recap-stat"><strong>{{ card.headline_data.active_days }}</strong><span>active days</span></p>
-                  <p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.beaten }}</strong><span>beaten</span></p>
-                  <p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.masteries }}</strong><span>masteries</span></p>
-                  {% set hardcore_points_sign = "+" if card.headline_data.hardcore_points > 0 else "" %}
-                  <p class="recap-points"><span>Hardcore Points <small>(RetroPoints)</small></span><strong>{{ hardcore_points_sign }}{{ "{:,}".format(card.headline_data.hardcore_points) }} <small>({{ "{:,}".format(card.headline_data.retro_points) }})</small></strong></p>
+                  {% if card.headline_data.beaten %}<p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.beaten }}</strong><span>beaten</span></p>{% endif %}
+                  {% if card.headline_data.completed %}<p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.completed }}</strong><span>completed</span></p>{% endif %}
+                  {% if card.headline_data.masteries %}<p class="recap-stat recap-stat--completion"><strong>{{ card.headline_data.masteries }}</strong><span>mastered</span></p>{% endif %}
+                  {% if card.headline_data.hardcore_points or card.headline_data.softcore_points %}
+                    {% set hardcore_points_sign = "+" if card.headline_data.hardcore_points > 0 else "" %}
+                    {% set retro_points_sign = "+" if card.headline_data.retro_points > 0 else "" %}
+                    {% set softcore_points_sign = "+" if card.headline_data.softcore_points > 0 else "" %}
+                    <div class="recap-points" aria-label="Points earned">
+                      {% if card.headline_data.hardcore_points %}
+                        <p class="recap-point"><strong>{{ hardcore_points_sign }}{{ "{:,}".format(card.headline_data.hardcore_points) }}</strong><span>Hardcore Points</span></p>
+                        <p class="recap-point"><strong>{{ retro_points_sign }}{{ "{:,}".format(card.headline_data.retro_points) }}</strong><span>RetroPoints</span></p>
+                      {% endif %}
+                      {% if card.headline_data.softcore_points %}<p class="recap-point"><strong>{{ softcore_points_sign }}{{ "{:,}".format(card.headline_data.softcore_points) }}</strong><span>Softcore Points</span></p>{% endif %}
+                    </div>
+                  {% endif %}
                 </div>
                 <dl class="recap-leaders">
                   <div><dt>Game of the year</dt><dd{% if card.headline_data.top_game.title|length > 36 %} class="recap-leader-value--long"{% endif %}>{{ card.headline_data.top_game.title }}</dd></div>

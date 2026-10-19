@@ -245,6 +245,30 @@ class LiveActivityRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(games[0]["game_image"], "https://retroachievements.org/Images/one.png")
         self.assertEqual(games[1]["completion_percentage"], 30)
 
+    async def test_game_awards_materialize_stored_beaten_completion_and_mastery_tiers(self):
+        client = RetroAchievements("key")
+        client.user_completion_progress = AsyncMock(return_value={
+            "Total": 3,
+            "Results": [
+                {"GameID": 1, "Title": "Beaten", "HighestAwardKind": "beaten-softcore",
+                 "HighestAwardDate": "2026-01-01T00:00:00Z"},
+                {"GameID": 2, "Title": "Completed", "HighestAwardKind": "completed",
+                 "HighestAwardDate": "2026-01-02T00:00:00Z"},
+                {"GameID": 3, "Title": "Mastered", "HighestAwardKind": "mastered",
+                 "HighestAwardDate": "2026-01-03T00:00:00Z"},
+            ],
+        })
+
+        awards = await client.hardcore_game_awards("Player", fetch_all=True)
+
+        self.assertEqual([award["game_id"] for award in awards["beaten"]], [1, 2, 3])
+        self.assertEqual([award["game_id"] for award in awards["completions"]], [2])
+        self.assertEqual([award["game_id"] for award in awards["masteries"]], [3])
+        self.assertEqual(
+            [award["source_award_kind"] for award in awards["beaten"]],
+            ["beaten-softcore", "completed", "mastered"],
+        )
+
     async def test_latest_hardcore_achievements_are_sorted_and_limited(self):
         client = RetroAchievements("key")
         client.user_summary = AsyncMock(return_value={

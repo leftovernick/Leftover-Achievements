@@ -217,7 +217,7 @@ class WrappedStorySelector:
         *,
         include_in_progress: bool = False,
     ) -> WrappedStoryPlan | None:
-        if summary.headline.hardcore_achievements == 0:
+        if summary.headline.total_achievements == 0:
             return None
         if summary.status == "in_progress" and not include_in_progress:
             return None
@@ -268,12 +268,15 @@ class WrappedStorySelector:
             relevant_flags=[flag for flag in flags if flag == "period_in_progress"],
         )
         add(
-            "headline_totals", "hardcore_achievements_primary", required=True,
+            "headline_totals", "all_achievements_primary", required=True,
             headline={
+                "total_achievements": summary.headline.total_achievements,
                 "hardcore_achievements": summary.headline.hardcore_achievements,
+                "softcore_achievements": summary.headline.softcore_achievements,
                 "hardcore_points": summary.headline.hardcore_points,
+                "softcore_points": summary.headline.softcore_points,
                 "retro_points": summary.headline.retro_points,
-                "primary_metric": "hardcore_achievements",
+                "primary_metric": "total_achievements",
             },
             reason="Headline totals are part of the stable story backbone.",
         )
@@ -289,12 +292,17 @@ class WrappedStorySelector:
             reason="The annual breadth and activity summary is required for every non-empty year.",
         )
 
+        has_hardcore = summary.headline.hardcore_achievements > 0
+        has_softcore = summary.headline.softcore_achievements > 0
         metric_fields = {
             "achievements": "achievements",
-            "hardcore_points": "hardcore_points",
-            "retro_points": "retro_points",
             "active_days": "active_days",
         }
+        if has_hardcore:
+            metric_fields.update(
+                hardcore_points="hardcore_points",
+                retro_points="retro_points",
+            )
         leaders = {name: _rank_games(summary, field)[0] for name, field in metric_fields.items()}
         leader_counts = {}
         for leader in leaders.values():
@@ -305,9 +313,10 @@ class WrappedStorySelector:
             leader_counts.items(), key=lambda item: (item[1], item[0] == achievement_winner.game_id),
         )
         dominant_metric_game = next(game for game in leaders.values() if game.game_id == dominant_game_id)
-        if winner_count == 4:
+        metric_count = len(metric_fields)
+        if winner_count == metric_count:
             game_variant = "dominant_all_metrics"
-        elif max(leader_counts.values()) >= 3:
+        elif metric_count > 2 and max(leader_counts.values()) >= metric_count - 1:
             game_variant = "dominant_most_metrics"
         else:
             game_variant = "split_leaders"
@@ -319,17 +328,19 @@ class WrappedStorySelector:
                 "achievement_winner_metric_wins": winner_count,
                 "dominant_metric_game": _metric_game(dominant_metric_game),
                 "dominant_metric_wins": dominant_metric_wins,
+                "has_hardcore": has_hardcore,
+                "has_softcore": has_softcore,
             },
             reason=(
-                f"The achievement winner led all four game metrics."
+                f"The achievement winner led all {metric_count} game metrics."
                 if game_variant == "dominant_all_metrics"
-                else f"{dominant_metric_game.title} led {dominant_metric_wins} of four metrics; the achievement winner remains the primary game."
+                else f"{dominant_metric_game.title} led {dominant_metric_wins} of {metric_count} metrics; the achievement winner remains the primary game."
                 if game_variant == "dominant_most_metrics"
-                else "The four game metrics were meaningfully divided among multiple leaders."
+                else f"The {metric_count} game metrics were meaningfully divided among multiple leaders."
             ),
         )
 
-        total_achievements = summary.headline.hardcore_achievements
+        total_achievements = summary.headline.total_achievements
         ranked_achievements = _rank_games(summary, "achievements")
         shares = {
             f"top_{count}_share": _percent(sum(game.achievements for game in ranked_achievements[:count]), total_achievements)
@@ -352,21 +363,21 @@ class WrappedStorySelector:
             reason=f"The top ten games supplied {top_ten_share:.1f}% of achievements.",
         )
 
-        combined_points_by_console = {}
-        for rows in (summary.consoles.hardcore_points, summary.consoles.retro_points):
-            for row in rows:
-                if row.console != "Unknown":
-                    combined_points_by_console[row.console] = combined_points_by_console.get(row.console, 0) + row.value
-        combined_points_leader = max(
-            combined_points_by_console,
-            key=combined_points_by_console.get,
-            default=None,
-        )
         console_leaders = {
             "achievements": summary.consoles.top_by_achievements.console if summary.consoles.top_by_achievements else None,
             "progress_games": summary.consoles.top_by_games.console if summary.consoles.top_by_games else None,
-            "points": combined_points_leader,
         }
+        if has_hardcore:
+            combined_points_by_console = {}
+            for rows in (summary.consoles.hardcore_points, summary.consoles.retro_points):
+                for row in rows:
+                    if row.console != "Unknown":
+                        combined_points_by_console[row.console] = combined_points_by_console.get(row.console, 0) + row.value
+            console_leaders["points"] = max(
+                combined_points_by_console,
+                key=combined_points_by_console.get,
+                default=None,
+            )
         top_console = console_leaders["achievements"]
         top_console_achievements = next(
             (row.value for row in summary.consoles.achievements if row.console == top_console), 0,
@@ -381,11 +392,13 @@ class WrappedStorySelector:
         console_sweep = len(set(console_leaders.values())) == 1
         split_console_leaders = len(set(console_leaders.values())) > 1
         leader_groups_by_console = {}
-        for metric, label in (
+        console_metric_labels = [
             ("achievements", "achievements earned"),
             ("progress_games", "games played"),
-            ("points", "points"),
-        ):
+        ]
+        if has_hardcore:
+            console_metric_labels.append(("points", "points"))
+        for metric, label in console_metric_labels:
             leader_groups_by_console.setdefault(console_leaders[metric], []).append(label)
         leader_groups = [
             {"console": console, "metrics": metrics}
@@ -414,8 +427,9 @@ class WrappedStorySelector:
                 "split_console_leaders": split_console_leaders,
                 "leader_groups": leader_groups,
                 "selection_flags": console_flags,
+                "has_hardcore": has_hardcore,
             },
-            reason=("One console led all three categories." if console_sweep else "Console leaders differed across the three categories." if split_console_leaders else f"The achievement leader held {console_share:.1f}% of achievements."),
+            reason=(f"One console led all {len(console_leaders)} categories." if console_sweep else f"Console leaders differed across the {len(console_leaders)} categories." if split_console_leaders else f"The achievement leader held {console_share:.1f}% of achievements."),
         )
 
         genre_eligible = summary.genres.coverage_percent >= 70 and not history_incomplete and bool(summary.genres.achievement_shares)
@@ -488,6 +502,7 @@ class WrappedStorySelector:
                 "biggest_points_month": points_month.month,
                 "biggest_retro_points_month": retro_month.month,
                 "different_value_month": busiest_month.month != points_month.month or busiest_month.month != retro_month.month,
+                "has_hardcore": has_hardcore,
             },
             reason=f"The busiest month supplied {busiest_share:.1f}% of annual achievements across {active_months} active months.",
         )
@@ -517,6 +532,7 @@ class WrappedStorySelector:
                     for game in summary.details.games
                     if game.game_id in biggest_day.active_game_ids
                 ],
+                "has_hardcore": has_hardcore,
             },
             reason=f"The peak achievement day contained {biggest_day.achievements} achievements.",
         )
@@ -662,19 +678,24 @@ class WrappedStorySelector:
         if (
             previous is not None
             and previous.status == "final"
-            and previous.headline.hardcore_achievements > 0
+            and previous.headline.total_achievements > 0
             and "history_incomplete" not in previous.coverage.flags
             and not history_incomplete
         ):
             comparisons = {
-                "hardcore_achievements": (previous.headline.hardcore_achievements, summary.headline.hardcore_achievements),
-                "hardcore_points": (previous.headline.hardcore_points, summary.headline.hardcore_points),
-                "retro_points": (previous.headline.retro_points, summary.headline.retro_points),
+                # Keep the stable payload key used by the existing view while
+                # comparing the new all-mode total stored in its values.
+                "hardcore_achievements": (previous.headline.total_achievements, summary.headline.total_achievements),
                 "active_days": (previous.headline.active_days, summary.headline.active_days),
                 "progress_games": (previous.headline.games_with_progress, summary.headline.games_with_progress),
                 "consoles": (previous.headline.consoles_with_progress, summary.headline.consoles_with_progress),
                 "masteries": (previous.headline.mastered_games, summary.headline.mastered_games),
             }
+            if has_hardcore and previous.headline.hardcore_achievements > 0:
+                comparisons.update(
+                    hardcore_points=(previous.headline.hardcore_points, summary.headline.hardcore_points),
+                    retro_points=(previous.headline.retro_points, summary.headline.retro_points),
+                )
             changes = {
                 name: {"previous": before, "current": after, "raw_change": after - before,
                        "percent_change": ((after - before) / before * 100) if before else None}
@@ -712,12 +733,16 @@ class WrappedStorySelector:
             "final_recap", "standard", required=True,
             headline={
                 "wrapped_year": summary.wrapped_year,
+                "total_achievements": summary.headline.total_achievements,
                 "hardcore_achievements": summary.headline.hardcore_achievements,
+                "softcore_achievements": summary.headline.softcore_achievements,
                 "hardcore_points": summary.headline.hardcore_points,
+                "softcore_points": summary.headline.softcore_points,
                 "retro_points": summary.headline.retro_points,
                 "progress_games": summary.headline.games_with_progress,
                 "active_days": summary.headline.active_days,
                 "beaten": summary.headline.effective_beaten_games,
+                "completed": summary.headline.completed_games,
                 "masteries": summary.headline.mastered_games,
                 "top_game": _metric_game(achievement_winner),
                 "top_console": top_console,
@@ -727,6 +752,7 @@ class WrappedStorySelector:
             },
             supporting={
                 "observed_beaten_games": summary.headline.observed_beaten_games,
+                "completed_games": summary.headline.completed_games,
                 "mastery_only_beaten_games": summary.awards.mastery_only_beaten_games,
             },
             reason="Every non-empty Wrapped ends with a presentation-neutral recap payload.",
@@ -759,7 +785,7 @@ class WrappedStoryService:
         plans = []
         previous_completed = None
         for summary in summaries:
-            if summary.headline.hardcore_achievements == 0:
+            if summary.headline.total_achievements == 0:
                 continue
             previous = previous_completed
             if summary.status == "final":
@@ -785,5 +811,5 @@ class WrappedStoryService:
         target = next((summary for summary in summaries if summary.wrapped_year == wrapped_year), None)
         if target is None:
             raise ValueError("Wrapped year is unavailable for this user")
-        previous = next((summary for summary in reversed(summaries) if summary.wrapped_year < wrapped_year and summary.status == "final" and summary.headline.hardcore_achievements > 0), None)
+        previous = next((summary for summary in reversed(summaries) if summary.wrapped_year < wrapped_year and summary.status == "final" and summary.headline.total_achievements > 0), None)
         return self.selector.build_plan(target, previous, include_in_progress=include_in_progress)

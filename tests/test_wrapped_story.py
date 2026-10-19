@@ -23,6 +23,7 @@ def make_summary(
     consoles=None,
     genres=None,
     masteries=None,
+    completions=None,
     beaten=None,
     day_values=None,
 ):
@@ -46,7 +47,10 @@ def make_summary(
         for index, genre in enumerate(genres or ["Action"] * len(achievements))
         if genre is not None
     }
-    database = FakeDatabase(rows, metadata=metadata, masteries=masteries or [], beaten=beaten or [])
+    database = FakeDatabase(
+        rows, metadata=metadata, masteries=masteries or [],
+        completions=completions or [], beaten=beaten or [],
+    )
     return WrappedService(database).generate_year("Player", 2026, NOW), database
 
 
@@ -310,7 +314,7 @@ class WrappedStoryTests(unittest.TestCase):
         self.assertEqual(special.headline_data["end_date"], base + timedelta(hours=3))
         self.assertEqual(special.supporting_data["presentation"]["date_label"], "Jan 5, 2026")
 
-    def test_final_recap_uses_effective_beaten_total(self):
+    def test_final_recap_uses_exclusive_stored_award_tiers(self):
         summary, _ = make_summary(
             [30, 20],
             masteries=[
@@ -319,22 +323,29 @@ class WrappedStoryTests(unittest.TestCase):
                 {"game_id": 3, "game_title": "Mastery only", "game_image": None,
                  "date": "2026-01-05T00:00:00+00:00"},
             ],
+            completions=[
+                {"game_id": 4, "game_title": "Completed", "game_image": None,
+                 "date": "2026-01-04T00:00:00+00:00"},
+            ],
             beaten=[
                 {"game_id": 1, "game_title": "Beaten only", "game_image": None,
                  "date": "2026-01-03T00:00:00+00:00"},
                 {"game_id": 2, "game_title": "Both", "game_image": None,
+                 "date": "2026-01-03T00:00:00+00:00"},
+                {"game_id": 4, "game_title": "Completed", "game_image": None,
                  "date": "2026-01-03T00:00:00+00:00"},
             ],
         )
         plan = self.selector.build_plan(summary)
         recap = card(plan, "final_recap")
         glance = card(plan, "year_at_a_glance")
-        self.assertEqual(recap.headline_data["beaten"], 3)
-        self.assertEqual(glance.headline_data["beaten"], 3)
+        self.assertEqual(recap.headline_data["beaten"], 1)
+        self.assertEqual(glance.headline_data["beaten"], 1)
+        self.assertEqual(recap.headline_data["completed"], 1)
         self.assertEqual(recap.headline_data["active_days"], 1)
         self.assertEqual(recap.headline_data["masteries"], 2)
-        self.assertEqual(recap.supporting_data["observed_beaten_games"], 2)
-        self.assertEqual(recap.supporting_data["mastery_only_beaten_games"], 1)
+        self.assertEqual(recap.supporting_data["observed_beaten_games"], 3)
+        self.assertEqual(recap.supporting_data["mastery_only_beaten_games"], 0)
 
     def test_special_highlight_can_repeat_a_non_biggest_day_fact_when_it_is_most_impressive(self):
         month_summary, _ = make_summary(

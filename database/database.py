@@ -234,6 +234,7 @@ def init_db():
             awarded_at TEXT NOT NULL,
             announced INTEGER NOT NULL,
             processed_at TEXT NOT NULL,
+            source_award_kind TEXT NOT NULL DEFAULT 'beaten-hardcore',
             PRIMARY KEY (ra_username, game_id)
         )
         """
@@ -241,6 +242,27 @@ def init_db():
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS beaten_game_poll_state (
+            ra_username TEXT PRIMARY KEY COLLATE NOCASE,
+            initialized_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processed_completion_events (
+            ra_username TEXT NOT NULL COLLATE NOCASE,
+            game_id INTEGER NOT NULL,
+            awarded_at TEXT NOT NULL,
+            processed_at TEXT NOT NULL,
+            game_title TEXT,
+            game_image TEXT,
+            PRIMARY KEY (ra_username, game_id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS completion_poll_state (
             ra_username TEXT PRIMARY KEY COLLATE NOCASE,
             initialized_at TEXT NOT NULL
         )
@@ -299,6 +321,7 @@ def init_db():
             covered_through TEXT NOT NULL,
             daily_json TEXT,
             utc_daily_json TEXT,
+            aggregation_version INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (user_key, month_start)
         )
     """)
@@ -306,6 +329,8 @@ def init_db():
         cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN daily_json TEXT")
     if "utc_daily_json" not in {row[1] for row in cur.execute("PRAGMA table_info(all_time_chart_months)")}:
         cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN utc_daily_json TEXT")
+    if "aggregation_version" not in {row[1] for row in cur.execute("PRAGMA table_info(all_time_chart_months)")}:
+        cur.execute("ALTER TABLE all_time_chart_months ADD COLUMN aggregation_version INTEGER NOT NULL DEFAULT 1")
     if "game_title" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_mastery_events)")}:
         cur.execute("ALTER TABLE processed_mastery_events ADD COLUMN game_title TEXT")
     if "game_image" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_mastery_events)")}:
@@ -313,6 +338,33 @@ def init_db():
     for column in ("game_title", "game_image"):
         if column not in {row[1] for row in cur.execute("PRAGMA table_info(processed_beaten_game_events)")}:
             cur.execute(f"ALTER TABLE processed_beaten_game_events ADD COLUMN {column} TEXT")
+    if "source_award_kind" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_beaten_game_events)")}:
+        cur.execute("ALTER TABLE processed_beaten_game_events ADD COLUMN source_award_kind TEXT NOT NULL DEFAULT 'beaten-hardcore'")
+    # Earlier Wrapped backfills materialized a lower beaten tier using the
+    # completion/mastery timestamp. Preserve those records for Wrapped while
+    # recording that they are not explicit Hardcore beat events.
+    cur.execute("""
+        UPDATE processed_beaten_game_events
+        SET source_award_kind = 'completed'
+        WHERE source_award_kind = 'beaten-hardcore'
+          AND EXISTS (
+              SELECT 1 FROM processed_completion_events completion
+              WHERE completion.ra_username = processed_beaten_game_events.ra_username
+                AND completion.game_id = processed_beaten_game_events.game_id
+                AND completion.awarded_at = processed_beaten_game_events.awarded_at
+          )
+    """)
+    cur.execute("""
+        UPDATE processed_beaten_game_events
+        SET source_award_kind = 'mastered'
+        WHERE source_award_kind = 'beaten-hardcore'
+          AND EXISTS (
+              SELECT 1 FROM processed_mastery_events mastery
+              WHERE mastery.ra_username = processed_beaten_game_events.ra_username
+                AND mastery.game_id = processed_beaten_game_events.game_id
+                AND mastery.awarded_at = processed_beaten_game_events.awarded_at
+          )
+    """)
     cur.execute(
         """
         INSERT OR IGNORE INTO app_settings (key, value, updated_at)
@@ -981,9 +1033,9 @@ def get_recorded_history_award_counts(start: datetime, end: datetime, usernames:
         return counts
     placeholders = ",".join("?" for _ in usernames)
     with get_conn() as conn:
-        for kind, table in (
-            ("beaten", "processed_beaten_game_events"),
-            ("masteries", "processed_mastery_events"),
+        for kind, table, award_filter in (
+            ("beaten", "processed_beaten_game_events", "AND source_award_kind = 'beaten-hardcore'"),
+            ("masteries", "processed_mastery_events", ""),
         ):
             row = conn.execute(
                 f"""
@@ -993,6 +1045,7 @@ def get_recorded_history_award_counts(start: datetime, end: datetime, usernames:
                     WHERE julianday(awarded_at) >= julianday(?)
                       AND julianday(awarded_at) < julianday(?)
                       AND ra_username COLLATE NOCASE IN ({placeholders})
+                      {award_filter}
                 )
                 """,
                 [start.isoformat(), end.isoformat(), *usernames],
@@ -1017,7 +1070,7 @@ def get_all_time_chart_cache() -> tuple[dict, dict]:
 
 
 def _get_recorded_chart_awards(usernames: list[str], end: datetime, table: str) -> dict:
-    if table not in {"processed_mastery_events", "processed_beaten_game_events"}:
+    if table not in {"processed_mastery_events", "processed_beaten_game_events", "processed_completion_events"}:
         raise ValueError("Unsupported award table")
     if not usernames:
         return {}
@@ -1054,6 +1107,48 @@ def get_recorded_chart_masteries(usernames: list[str], end: datetime) -> dict:
 
 def get_recorded_chart_beaten_games(usernames: list[str], end: datetime) -> dict:
     return _get_recorded_chart_awards(usernames, end, "processed_beaten_game_events")
+
+
+def get_recorded_chart_completions(usernames: list[str], end: datetime) -> dict:
+    return _get_recorded_chart_awards(usernames, end, "processed_completion_events")
+
+
+def completion_poll_initialized(ra_username: str) -> bool:
+    with closing(get_conn()) as conn:
+        return conn.execute(
+            "SELECT 1 FROM completion_poll_state WHERE ra_username = ?", (ra_username,),
+        ).fetchone() is not None
+
+
+def mark_completion_poll_initialized(ra_username: str):
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO completion_poll_state (ra_username, initialized_at) VALUES (?, ?)",
+            (ra_username, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def save_processed_completion_events(completions: list[dict]):
+    if not completions:
+        return
+    processed_at = datetime.now(timezone.utc).isoformat()
+    with closing(get_conn()) as conn:
+        conn.executemany(
+            """
+            INSERT INTO processed_completion_events (
+                ra_username, game_id, awarded_at, processed_at, game_title, game_image
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ra_username, game_id) DO UPDATE SET
+                game_title = COALESCE(excluded.game_title, game_title),
+                game_image = COALESCE(excluded.game_image, game_image)
+            """,
+            [(
+                award["username"], award["game_id"], award["awarded_at"], processed_at,
+                award.get("game_title"), award.get("game_image"),
+            ) for award in completions],
+        )
+        conn.commit()
 
 
 def update_recorded_beaten_metadata(awards: list[dict]):
@@ -1139,23 +1234,26 @@ def save_all_time_chart_month(
     covered_through: datetime,
     days: dict,
     utc_days: dict | None = None,
+    aggregation_version: int = 2,
 ):
     with closing(get_conn()) as conn:
         conn.execute("""
             INSERT INTO all_time_chart_months (
                 user_key, month_start, hardcore_points, retro_points,
-                covered_through, daily_json, utc_daily_json
+                covered_through, daily_json, utc_daily_json, aggregation_version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_key, month_start) DO UPDATE SET
                 hardcore_points = excluded.hardcore_points,
                 retro_points = excluded.retro_points,
                 covered_through = excluded.covered_through,
                 daily_json = excluded.daily_json,
-                utc_daily_json = excluded.utc_daily_json
+                utc_daily_json = excluded.utc_daily_json,
+                aggregation_version = excluded.aggregation_version
         """, (
             user_key, month_start, points["hardcore_points"], points["retro_points"],
             covered_through.isoformat(), json.dumps(days), json.dumps(utc_days) if utc_days is not None else None,
+            aggregation_version,
         ))
         conn.commit()
 
@@ -1553,9 +1651,9 @@ def save_processed_beaten_game_event(beaten_game: dict, announced: bool):
                 game_id,
                 awarded_at,
                 announced,
-                processed_at, game_title, game_image
+                processed_at, game_title, game_image, source_award_kind
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ra_username, game_id) DO NOTHING
             """,
             (
@@ -1566,6 +1664,7 @@ def save_processed_beaten_game_event(beaten_game: dict, announced: bool):
                 datetime.now(timezone.utc).isoformat(),
                 beaten_game.get("game_title"),
                 beaten_game.get("game_image"),
+                beaten_game.get("source_award_kind", "beaten-hardcore"),
             ),
         )
         conn.commit()
@@ -1585,9 +1684,9 @@ def save_processed_beaten_game_events(beaten_games: list[dict], announced: bool)
                 game_id,
                 awarded_at,
                 announced,
-                processed_at, game_title, game_image
+                processed_at, game_title, game_image, source_award_kind
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ra_username, game_id) DO NOTHING
             """,
             [
@@ -1599,6 +1698,7 @@ def save_processed_beaten_game_events(beaten_games: list[dict], announced: bool)
                     processed_at,
                     beaten_game.get("game_title"),
                     beaten_game.get("game_image"),
+                    beaten_game.get("source_award_kind", "beaten-hardcore"),
                 )
                 for beaten_game in beaten_games
             ],

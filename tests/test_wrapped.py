@@ -61,7 +61,7 @@ def day(achievements, points, retro, games, first=None):
 
 
 class FakeDatabase:
-    def __init__(self, rows=None, metadata=None, masteries=None, beaten=None):
+    def __init__(self, rows=None, metadata=None, masteries=None, completions=None, beaten=None):
         self.profile = {
             "username": "Player",
             "ulid": "ABC",
@@ -73,6 +73,7 @@ class FakeDatabase:
         self.rows = rows or complete_rows()
         self.metadata = metadata or {}
         self.masteries = masteries or []
+        self.completions = completions or []
         self.beaten = beaten or []
         self.metadata_calls = 0
 
@@ -88,6 +89,9 @@ class FakeDatabase:
 
     def get_recorded_chart_masteries(self, usernames, end):
         return {"player": self.masteries}
+
+    def get_recorded_chart_completions(self, usernames, end):
+        return {"player": self.completions}
 
     def get_recorded_chart_beaten_games(self, usernames, end):
         return {"player": self.beaten}
@@ -167,6 +171,58 @@ class WrappedSummaryTests(unittest.TestCase):
         self.assertEqual(summary.headline.games_with_progress, 2)
         self.assertEqual(summary.highlights.first_activity.date, date(2025, 11, 1))
         self.assertEqual(summary.highlights.last_activity.date, date(2026, 10, 31))
+
+    def test_softcore_is_included_and_hardcore_upgrade_wins_once_across_months(self):
+        rows = complete_rows()
+        for row in rows.values():
+            row["aggregation_version"] = 2
+            row["utc_days"] = {}
+
+        def event_day(earned_at, *, hardcore, achievement_id, points):
+            return {
+                "achievements_earned": int(hardcore),
+                "softcore_achievements_earned": int(not hardcore),
+                "hardcore_points": points if hardcore else 0,
+                "retro_points": points * 2 if hardcore else 0,
+                "unlock_events": [{
+                    "achievement_id": achievement_id,
+                    "hardcore": hardcore,
+                    "earned_at": earned_at,
+                    "game_id": 7,
+                    "points": points,
+                    "retro_points": points * 2,
+                }],
+                "games": [{
+                    "game_id": 7, "game_title": "Mode Game", "game_image": "/7.png",
+                    "console": "NES", "achievements_earned": int(hardcore),
+                    "softcore_achievements_earned": int(not hardcore),
+                    "hardcore_points": points if hardcore else 0,
+                    "retro_points": points * 2 if hardcore else 0,
+                }],
+            }
+
+        rows["2025-11-01"]["utc_days"]["2025-11-05"] = event_day(
+            "2025-11-05T12:00:00+00:00", hardcore=False, achievement_id=100, points=5,
+        )
+        rows["2025-12-01"]["utc_days"]["2025-12-07"] = event_day(
+            "2025-12-07T12:00:00+00:00", hardcore=True, achievement_id=100, points=5,
+        )
+        rows["2026-01-01"]["utc_days"]["2026-01-09"] = event_day(
+            "2026-01-09T12:00:00+00:00", hardcore=False, achievement_id=101, points=10,
+        )
+
+        summary = WrappedService(FakeDatabase(rows)).generate_year("Player", 2026, self.now)
+
+        self.assertEqual(summary.headline.total_achievements, 2)
+        self.assertEqual(summary.headline.hardcore_achievements, 1)
+        self.assertEqual(summary.headline.softcore_achievements, 1)
+        self.assertEqual(summary.headline.hardcore_points, 5)
+        self.assertEqual(summary.headline.softcore_points, 10)
+        self.assertEqual(summary.headline.active_days, 2)
+        self.assertEqual(summary.details.games[0].achievements, 2)
+        self.assertEqual(summary.details.games[0].hardcore_achievements, 1)
+        self.assertEqual(summary.details.games[0].softcore_achievements, 1)
+        self.assertEqual([item.date for item in summary.details.days], [date(2025, 12, 7), date(2026, 1, 9)])
 
     def test_complete_coverage_ends_at_utc_october_partition(self):
         rows = complete_rows()
@@ -327,7 +383,7 @@ class WrappedSummaryTests(unittest.TestCase):
         ):
             self.assertNotIn("Events", [row.console for row in rankings])
 
-    def test_awards_are_separated_by_reliability_and_month(self):
+    def test_awards_are_read_from_stored_tiers_and_months(self):
         db = FakeDatabase(
             masteries=[{"game_id": 1, "game_title": "Mastered", "game_image": None,
                         "date": "2026-01-02T00:00:00+00:00"}],
@@ -338,13 +394,13 @@ class WrappedSummaryTests(unittest.TestCase):
         self.assertEqual(summary.awards.mastered_games, 1)
         self.assertEqual(summary.awards.beaten_games_partial, 1)
         self.assertEqual(summary.awards.observed_beaten_games, 1)
-        self.assertEqual(summary.awards.effective_beaten_games, 2)
-        self.assertEqual(summary.headline.effective_beaten_games, 2)
+        self.assertEqual(summary.awards.effective_beaten_games, 1)
+        self.assertEqual(summary.headline.effective_beaten_games, 1)
         self.assertEqual(summary.awards.mastery_reliability, "more_reliable")
-        self.assertEqual(summary.awards.beaten_reliability, "partial_historical_coverage")
-        self.assertIn("beaten_history_partial", summary.coverage.flags)
+        self.assertEqual(summary.awards.beaten_reliability, "stored_awards")
+        self.assertNotIn("beaten_history_partial", summary.coverage.flags)
 
-    def test_effective_beaten_uses_unique_observed_and_mastered_game_ids(self):
+    def test_wrapped_award_tiers_do_not_double_count_higher_awards(self):
         db = FakeDatabase(
             masteries=[
                 {"game_id": 2, "game_title": "Both", "game_image": None,
@@ -354,20 +410,29 @@ class WrappedSummaryTests(unittest.TestCase):
                 {"game_id": 4, "game_title": "Another mastery", "game_image": None,
                  "date": "2026-01-05T00:00:00+00:00"},
             ],
+            completions=[
+                {"game_id": 4, "game_title": "Completed then mastered", "game_image": None,
+                 "date": "2026-01-03T00:00:00+00:00"},
+                {"game_id": 5, "game_title": "Completed", "game_image": None,
+                 "date": "2026-01-04T00:00:00+00:00"},
+            ],
             beaten=[
                 {"game_id": 1, "game_title": "Beaten only", "game_image": None,
                  "date": "2026-01-01T00:00:00+00:00"},
                 {"game_id": 2, "game_title": "Both", "game_image": None,
                  "date": "2026-01-02T00:00:00+00:00"},
+                {"game_id": 5, "game_title": "Completed", "game_image": None,
+                 "date": "2026-01-02T00:00:00+00:00"},
             ],
         )
         summary = WrappedService(db).generate_year("Player", 2026, self.now)
-        self.assertEqual(summary.awards.observed_beaten_games, 2)
+        self.assertEqual(summary.awards.observed_beaten_games, 3)
         self.assertEqual(summary.awards.mastered_games, 3)
-        self.assertEqual(summary.awards.effective_beaten_games, 4)
-        self.assertEqual(summary.awards.mastery_only_beaten_games, 2)
-        self.assertEqual(summary.headline.observed_beaten_games, 2)
-        self.assertEqual(summary.headline.effective_beaten_games, 4)
+        self.assertEqual(summary.awards.completed_games, 1)
+        self.assertEqual(summary.awards.effective_beaten_games, 1)
+        self.assertEqual(summary.awards.mastery_only_beaten_games, 0)
+        self.assertEqual(summary.headline.observed_beaten_games, 3)
+        self.assertEqual(summary.headline.effective_beaten_games, 1)
 
     def test_first_activity_is_local_only_and_enrichment_slots_stay_empty(self):
         rows = complete_rows()

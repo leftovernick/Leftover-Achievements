@@ -426,8 +426,8 @@ class RetroAchievements:
         return sorted(games.values(), key=lambda game: game["game_title"].lower())
 
     async def hardcore_game_awards(self, username: str, fetch_all: bool = False) -> dict[str, list[dict]]:
-        """Return canonical Hardcore beaten and mastery awards from completion progress."""
-        awards = {"beaten": [], "masteries": []}
+        """Return canonical beaten, Softcore completion, and mastery awards."""
+        awards = {"beaten": [], "completions": [], "masteries": []}
         offset = 0
         count = 500
 
@@ -441,7 +441,7 @@ class RetroAchievements:
                 if not isinstance(game, dict):
                     continue
                 award_kind = game.get("HighestAwardKind") or game.get("highestAwardKind")
-                if award_kind not in {"beaten-hardcore", "mastered"}:
+                if award_kind not in {"beaten-softcore", "beaten-hardcore", "completed", "mastered"}:
                     continue
 
                 game_id = game.get("GameID") or game.get("gameId")
@@ -453,20 +453,34 @@ class RetroAchievements:
                 if image:
                     image = urljoin(RA_BASE_URL, image)
 
-                event_type = "beaten" if award_kind == "beaten-hardcore" else "mastery"
-                awards["beaten" if event_type == "beaten" else "masteries"].append(
-                    {
-                        "username": username,
-                        "game_id": int(game_id),
-                        "game_title": game.get("Title") or game.get("title") or "Unknown Game",
-                        "game_image": image,
-                        "console": game.get("ConsoleName") or game.get("consoleName"),
-                        "hardcore_achievements": int(game.get("NumAwardedHardcore") or game.get("numAwardedHardcore") or 0),
-                        "total_achievements": int(game.get("MaxPossible") or game.get("maxPossible") or 0),
-                        "awarded_at": awarded_at,
-                        "dedupe_key": f"{username}:{event_type}:{int(game_id)}:{awarded_at}",
-                    }
-                )
+                base_award = {
+                    "username": username,
+                    "game_id": int(game_id),
+                    "game_title": game.get("Title") or game.get("title") or "Unknown Game",
+                    "game_image": image,
+                    "console": game.get("ConsoleName") or game.get("consoleName"),
+                    "hardcore_achievements": int(game.get("NumAwardedHardcore") or game.get("numAwardedHardcore") or 0),
+                    "total_achievements": int(game.get("MaxPossible") or game.get("maxPossible") or 0),
+                    "awarded_at": awarded_at,
+                    "source_award_kind": award_kind,
+                }
+                # Completion progress exposes only the highest award. Materialize
+                # the lower beaten state during ingestion so downstream features
+                # read explicit stored records instead of inferring relationships.
+                awards["beaten"].append({
+                    **base_award,
+                    "dedupe_key": f"{username}:beaten:{int(game_id)}:{awarded_at}",
+                })
+                if award_kind == "completed":
+                    awards["completions"].append({
+                        **base_award,
+                        "dedupe_key": f"{username}:completion:{int(game_id)}:{awarded_at}",
+                    })
+                elif award_kind == "mastered":
+                    awards["masteries"].append({
+                        **base_award,
+                        "dedupe_key": f"{username}:mastery:{int(game_id)}:{awarded_at}",
+                    })
 
             total = int(data.get("Total") or data.get("total") or len(results))
             offset += len(results)

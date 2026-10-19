@@ -39,7 +39,8 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
              "GameID": 20, "GameTitle": "Second Game", "ConsoleName": "SNES"},
             {"AchievementID": 4, "Date": "2026-02-02 12:00:00", "HardcoreMode": True, "Points": 25, "TrueRatio": 50,
              "GameID": 30, "GameTitle": "February Game"},
-            {"AchievementID": 5, "Date": "2026-01-10 12:00:00", "HardcoreMode": 0, "Points": 100, "TrueRatio": 200},
+            {"AchievementID": 5, "Date": "2026-01-10 12:00:00", "HardcoreMode": 0, "Points": 100, "TrueRatio": 200,
+             "GameID": 50, "GameTitle": "Softcore Only", "ConsoleName": "NES"},
         ]
         self.client = Mock()
         self.client.lookup_user = AsyncMock(return_value=self.profile)
@@ -122,6 +123,39 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
             row, parse_date("2026-01-31T23:59:59Z"), self.now,
         ))
 
+    def test_softcore_unlocks_are_stored_without_changing_hardcore_chart_totals(self):
+        days = daily_points(
+            [
+                {"AchievementID": 90, "Date": "2026-01-10 12:00:00", "HardcoreMode": 0,
+                 "Points": 25, "TrueRatio": 100, "GameID": 9, "GameTitle": "Casual Game"},
+                {"AchievementID": 91, "Date": "2026-01-10 13:00:00", "HardcoreMode": 1,
+                 "Points": 10, "TrueRatio": 30, "GameID": 9, "GameTitle": "Casual Game"},
+            ],
+            parse_date("2026-01-01T00:00:00Z"),
+            parse_date("2026-01-31T23:59:59Z"),
+            timezone.utc,
+        )
+
+        result = days["2026-01-10"]
+        self.assertEqual(result["achievements_earned"], 1)
+        self.assertEqual(result["softcore_achievements_earned"], 1)
+        self.assertEqual(result["hardcore_points"], 10)
+        self.assertEqual(result["softcore_points"], 25)
+        self.assertEqual(len(result["unlock_events"]), 2)
+        self.assertEqual(result["games"][0]["softcore_achievements_earned"], 1)
+        self.assertEqual(result["games"][0]["softcore_points"], 25)
+
+    def test_pre_softcore_cache_version_is_not_fresh(self):
+        row = {
+            "covered_through": "2026-01-31T23:59:59Z",
+            "aggregation_version": 1,
+            "days": {"2026-01-08": {"games": []}},
+            "utc_days": {"2026-01-08": {"games": []}},
+        }
+        self.assertFalse(self.service.month_is_fresh(
+            row, parse_date("2026-01-31T23:59:59Z"), self.now,
+        ))
+
     async def test_reload_reuses_persisted_cache_without_network_requests(self):
         await self.refresh()
         self.client.reset_mock()
@@ -186,6 +220,19 @@ class AllTimeChartTests(unittest.IsolatedAsyncioTestCase):
         }])
         self.client.lookup_user.assert_not_awaited()
         self.client.achievements_earned_between.assert_not_awaited()
+
+    def test_recorded_completions_are_persisted_for_wrapped(self):
+        award = {
+            "username": "Player", "game_id": 90,
+            "awarded_at": "2026-01-13T12:00:00Z",
+            "game_title": "Completed Game", "game_image": "completed.png",
+        }
+        db.save_processed_completion_events([award])
+
+        self.assertEqual(db.get_recorded_chart_completions(["player"], self.now)["player"], [{
+            "game_id": 90, "game_title": "Completed Game",
+            "game_image": "completed.png", "date": award["awarded_at"],
+        }])
 
     def test_old_beaten_metadata_can_be_filled_without_changing_announcement_state(self):
         award = {"username": "Player", "game_id": 88, "awarded_at": "2026-01-12T12:00:00Z"}
