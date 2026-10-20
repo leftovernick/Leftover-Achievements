@@ -544,7 +544,7 @@
     options.scales.y.title = { display: true, text: metricLabel };
     // Logos are centered on their data point, including at the date/zero boundaries.
     // Reserve a pixel gutter and let award thumbnails draw into it instead of
-    // clipping half an icon or inventing earlier dates / negative scores.
+    // clipping half an icon or extending either axis beyond recorded data.
     options.layout = { padding: { left: 16, right: 16, top: 16, bottom: 16 } };
     options.scales.x.ticks.padding = 16;
     options.scales.y.ticks.padding = 16;

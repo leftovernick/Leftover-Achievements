@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from contextlib import closing
 from pathlib import Path, PurePosixPath
 
 VERSION_PATTERN = re.compile(r"^v?[0-9]+\.[0-9]+\.[0-9]+$")
@@ -21,7 +22,10 @@ REQUIRED_PATHS = {
     "instance_config.py",
     "launcher.py",
     "runtime.py",
+    "security.py",
     "requirements.txt",
+    "LICENSE.md",
+    "THIRD_PARTY_NOTICES.md",
     "build-version.txt",
     "build-architecture.txt",
     "database/database.py",
@@ -212,6 +216,8 @@ def migrate_legacy_data(legacy_root: Path, data_dir: Path) -> None:
     env_target = data_dir / ".env"
     if env_source.is_file() and not env_target.exists():
         shutil.copy2(env_source, env_target)
+    if env_target.exists():
+        env_target.chmod(0o600)
     database_sources = []
     if env_source.is_file():
         for line in env_source.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -234,8 +240,11 @@ def migrate_legacy_data(legacy_root: Path, data_dir: Path) -> None:
         for source in database_sources:
             if source.is_file():
                 shutil.copy2(source, database_target)
+                database_target.chmod(0o600)
                 database_copied = True
                 break
+    if database_target.exists():
+        database_target.chmod(0o600)
     if database_copied and env_source.is_file():
         api_key = ""
         for line in env_source.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -243,7 +252,7 @@ def migrate_legacy_data(legacy_root: Path, data_dir: Path) -> None:
                 api_key = line.split("=", 1)[1].strip().strip("\"'")
                 break
         if api_key:
-            with sqlite3.connect(database_target) as connection:
+            with closing(sqlite3.connect(database_target)) as connection, connection:
                 table_exists = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_settings'"
                 ).fetchone()

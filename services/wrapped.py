@@ -118,7 +118,7 @@ class WrappedHeadline:
 
     @property
     def beaten_games_partial(self) -> int:
-        """Backward-compatible name for the observed-only historical total."""
+        """Return the observed beaten-game total used by summary callers."""
         return self.observed_beaten_games
 
 
@@ -185,7 +185,7 @@ class WrappedAwards:
 
     @property
     def beaten_games_partial(self) -> int:
-        """Backward-compatible name for the observed-only historical total."""
+        """Return the observed beaten-game total used by story callers."""
         return self.observed_beaten_games
 
 
@@ -768,8 +768,8 @@ class WrappedService:
     def _period_days(rows: dict[str, dict], period: WrappedPeriod, now: datetime) -> dict[date, dict]:
         end_date = min(period.end_date, now.astimezone(timezone.utc).date())
         source_values = []
-        # Wrapped follows RetroAchievements' UTC clock. Older caches temporarily
-        # fall back to local days until their one-time UTC refresh completes.
+        # Wrapped follows RetroAchievements' UTC clock. Rows without UTC buckets
+        # use their daily aggregate until the background refresh replaces them.
         for row in rows.values():
             source_days = row.get("utc_days")
             if source_days is None:
@@ -858,7 +858,7 @@ class WrappedService:
                     target["first_retro_points"] = int(event.get("retro_points") or 0) if hardcore else 0
             return combined
 
-        # Backward-compatible fallback while version 1 rows are being rebuilt.
+        # Daily aggregates remain usable when mode-aware unlock facts are unavailable.
         for day, values in source_values:
             target = combined.setdefault(day, {
                 "hardcore_points": 0, "softcore_points": 0, "retro_points": 0,

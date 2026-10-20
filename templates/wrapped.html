@@ -520,10 +520,10 @@
                     </div>
                   {% endif %}
                 </div>
-                <dl class="recap-leaders">
-                  <div><dt>Game of the year</dt><dd{% if card.headline_data.top_game.title|length > 36 %} class="recap-leader-value--long"{% endif %}>{{ card.headline_data.top_game.title }}</dd></div>
-                  <div><dt>Top console</dt><dd>{{ card.headline_data.top_console }}</dd></div>
-                  {% if card.headline_data.top_genre %}<div><dt>Top genre</dt><dd>{{ card.headline_data.top_genre }}</dd></div>{% endif %}
+                <dl class="recap-leaders" data-recap-leaders>
+                  <div><dt>Game of the year</dt><dd data-recap-leader-value>{{ card.headline_data.top_game.title }}</dd></div>
+                  <div><dt>Top console</dt><dd data-recap-leader-value>{{ card.headline_data.top_console }}</dd></div>
+                  {% if card.headline_data.top_genre %}<div><dt>Top genre</dt><dd data-recap-leader-value>{{ card.headline_data.top_genre }}</dd></div>{% endif %}
                 </dl>
                 <footer><img src="/static/images/leftover-achievements-logo.png" alt="" width="28" height="28" /><strong>LeftoverAchievements</strong><span>{{ card.headline_data.period_start.strftime("%b") }} {{ card.headline_data.period_start.day }}, {{ card.headline_data.period_start.year }} → {{ card.headline_data.period_end.strftime("%b") }} {{ card.headline_data.period_end.day }}, {{ card.headline_data.period_end.year }}</span></footer>
               </div>

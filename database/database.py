@@ -11,14 +11,32 @@ DB_PATH = str(runtime.database_path.resolve())
 DB_DIR = str(runtime.database_path.resolve().parent)
 
 
+class ClosingConnection(sqlite3.Connection):
+    """Keep SQLite transaction semantics while closing context-managed handles."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(
+        DB_PATH,
+        check_same_thread=False,
+        factory=ClosingConnection,
+    )
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
     os.makedirs(DB_DIR, exist_ok=True)
+    if os.name != "nt":
+        descriptor = os.open(DB_PATH, os.O_CREAT | os.O_APPEND, 0o600)
+        os.close(descriptor)
+        os.chmod(DB_PATH, 0o600)
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -340,9 +358,8 @@ def init_db():
             cur.execute(f"ALTER TABLE processed_beaten_game_events ADD COLUMN {column} TEXT")
     if "source_award_kind" not in {row[1] for row in cur.execute("PRAGMA table_info(processed_beaten_game_events)")}:
         cur.execute("ALTER TABLE processed_beaten_game_events ADD COLUMN source_award_kind TEXT NOT NULL DEFAULT 'beaten-hardcore'")
-    # Earlier Wrapped backfills materialized a lower beaten tier using the
-    # completion/mastery timestamp. Preserve those records for Wrapped while
-    # recording that they are not explicit Hardcore beat events.
+    # A derived lower beaten tier belongs to Wrapped, but it must remain
+    # distinguishable from an explicit Hardcore beat used by weekly history.
     cur.execute("""
         UPDATE processed_beaten_game_events
         SET source_award_kind = 'completed'

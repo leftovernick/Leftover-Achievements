@@ -753,7 +753,11 @@ button, a { font: inherit; }
 .recap-leaders div { min-width: 0; }
 .recap-leaders dt { margin-bottom: 7px; color: var(--wrapped-muted); font-size: 0.57rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
 .recap-leaders dd { margin: 0; max-width: 18ch; font-size: clamp(1.12rem, 2.35cqw, 1.9rem); font-weight: 900; line-height: 1.05; letter-spacing: -0.025em; text-wrap: balance; }
-.recap-leaders dd.recap-leader-value--long { font-size: clamp(0.9rem, 1.65cqw, 1.35rem); line-height: 1; }
+.recap-leaders--compact { gap: clamp(14px, 1.7cqw, 20px); margin-bottom: 10px; }
+.recap-leaders--compact dt { margin-bottom: 5px; }
+.recap-leaders--compact dd { font-size: clamp(0.82rem, 1.4cqw, 1.12rem); line-height: 0.94; }
+.recap-leaders--compact dd:not(.recap-leader-value--wrapped) { white-space: nowrap; }
+.recap-leaders dd.recap-leader-value--wrapped { max-width: 24ch; font-size: clamp(0.82rem, 1.4cqw, 1.12rem); line-height: 0.94; }
 .recap-layout footer { position: relative; z-index: 2; grid-column: 1 / 8; display: flex; align-items: center; gap: 9px; padding-top: 12px; border-top: 1px solid var(--wrapped-line); font-size: 0.75rem; }
 .recap-layout footer span { margin-left: auto; color: var(--wrapped-muted); font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
 .recap-layout--no-art::after, .recap-layout--no-art .recap-art { display: none; }
@@ -831,7 +835,8 @@ button, a { font: inherit; }
 .wrapped-export-stage--story .recap-leaders { grid-column: 1 / -1; grid-row: 5; grid-template-columns: 1.5fr 1fr 1fr; gap: 28px; margin-bottom: 32px; }
 .wrapped-export-stage--story .recap-leaders dt { font-size: 11px; }
 .wrapped-export-stage--story .recap-leaders dd { font-size: 28px; }
-.wrapped-export-stage--story .recap-leaders dd.recap-leader-value--long { font-size: 24px; }
+.wrapped-export-stage--story .recap-leaders--compact dd { font-size: 24px; }
+.wrapped-export-stage--story .recap-leaders dd.recap-leader-value--wrapped { font-size: 21px; }
 .wrapped-export-stage--story .recap-layout footer { grid-column: 1 / -1; grid-row: 6; padding-top: 24px; font-size: 16px; }
 .wrapped-export-stage--story .recap-layout footer span { font-size: 13px; }
 
@@ -1083,6 +1088,8 @@ button, a { font: inherit; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; gap: 18px 14px; margin-bottom: 18px; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders div:first-child { grid-column: 1 / -1; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders dd { font-size: 1rem; }
+  .wrapped-story > .wrapped-card--final_recap .recap-leaders--compact dd { font-size: 0.86rem; line-height: 0.94; }
+  .wrapped-story > .wrapped-card--final_recap .recap-leaders dd.recap-leader-value--wrapped { font-size: 0.86rem; line-height: 0.94; }
   .wrapped-story > .wrapped-card--final_recap .recap-layout footer { grid-column: 1 / -1; flex-wrap: wrap; gap: 8px; }
   .wrapped-story > .wrapped-card--final_recap .recap-layout footer span { width: 100%; margin-left: 0; padding-top: 4px; }
   .wrapped-story > .wrapped-card--final_recap { height: 100svh; min-height: 100svh; }
@@ -1116,6 +1123,8 @@ button, a { font: inherit; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders div:first-child { grid-column: auto; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders dt { margin-bottom: 3px; font-size: 0.44rem; }
   .wrapped-story > .wrapped-card--final_recap .recap-leaders dd { font-size: clamp(0.66rem, 2.8cqw, 0.82rem); line-height: 1; }
+  .wrapped-story > .wrapped-card--final_recap .recap-leaders--compact dd { font-size: clamp(0.56rem, 2.35cqw, 0.7rem); line-height: 0.94; }
+  .wrapped-story > .wrapped-card--final_recap .recap-leaders dd.recap-leader-value--wrapped { font-size: clamp(0.56rem, 2.35cqw, 0.7rem); line-height: 0.94; }
   .wrapped-story > .wrapped-card--final_recap .recap-layout footer { grid-row: 6; flex-wrap: nowrap; gap: 5px; padding-top: 7px; font-size: 0.58rem; }
   .wrapped-story > .wrapped-card--final_recap .recap-layout footer img { width: 19px; height: 19px; }
   .wrapped-story > .wrapped-card--final_recap .recap-layout footer span { width: auto; margin-left: auto; padding-top: 0; font-size: 0.46rem; }

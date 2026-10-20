@@ -566,15 +566,19 @@ class WrappedPrototypeUITests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(f"<span>{label}</span>", zero_markup)
         self.assertNotIn('recap-stat--completion', zero_markup)
 
-    async def test_final_recap_marks_long_game_titles_for_compact_spacing(self):
+    async def test_final_recap_exposes_leader_values_for_rendered_wrap_detection(self):
         _, _, summary, plan = prototype_samples()
         recap = next(item for item in plan.cards if item.type == "final_recap")
-        recap.headline_data["top_game"]["title"] = "Pokémon Yellow Version: Special Pikachu Edition"
+        recap.headline_data["top_game"]["title"] = "Final Fantasy X: International"
+        recap.headline_data["top_console"] = "PlayStation 2"
+        recap.headline_data["top_genre"] = "Turn-Based RPG"
         recap_markup = render(summary, plan).split('data-card-type="final_recap"', 1)[1]
-        self.assertIn(
-            '<dd class="recap-leader-value--long">Pokémon Yellow Version: Special Pikachu Edition</dd>',
-            recap_markup,
-        )
+        self.assertIn('class="recap-leaders" data-recap-leaders', recap_markup)
+        self.assertEqual(recap_markup.count("data-recap-leader-value"), 3)
+        self.assertNotIn("recap-leaders--compact", recap_markup)
+        self.assertNotIn("recap-leader-value--wrapped", recap_markup)
+        for value in ("Final Fantasy X: International", "PlayStation 2", "Turn-Based RPG"):
+            self.assertIn(f'<dd data-recap-leader-value>{value}</dd>', recap_markup)
 
     async def test_year_at_a_glance_renders_effective_beaten_with_existing_metrics(self):
         _, _, summary, plan = prototype_samples()

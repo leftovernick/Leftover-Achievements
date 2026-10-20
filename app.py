@@ -36,9 +36,25 @@ from services.retroachievements import RetroAchievements
 from services.updater import ApplicationUpdater, UpdateError
 from services.wrapped import WrappedService
 from services.wrapped_story import WrappedStoryCard, WrappedStorySelector, special_highlight_presentation
+from security import apply_security_headers, request_has_trusted_origin
 
 
 app = FastAPI(title="LeftoverAchievements Display")
+
+
+@app.middleware("http")
+async def secure_browser_requests(request: Request, call_next):
+    """Reject cross-site mutations and apply baseline browser protections."""
+    if not request_has_trusted_origin(request):
+        response = Response(
+            "Cross-site requests are not allowed.",
+            status_code=403,
+            media_type="text/plain",
+        )
+    else:
+        response = await call_next(request)
+    apply_security_headers(response)
+    return response
 
 
 def remote_page_url(request: Request) -> str | None:
@@ -171,6 +187,7 @@ STATIC_AUDIO_DIR = str(runtime.mutable_audio_dir)
 CUSTOM_AUDIO_KINDS = ("achievement", "beaten", "mastery")
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg"}
 MAX_CUSTOM_AUDIO_BYTES = 10 * 1024 * 1024
+MAX_API_KEY_LENGTH = 512
 TEST_GAME_ID = 1454
 TEST_GAME_TITLE = "The Legend of Zelda"
 TEST_GAME_IMAGE = "https://retroachievements.org/Images/012434.png"
@@ -777,6 +794,8 @@ async def save_custom_audio(kind: str, upload: UploadFile | None) -> str | None:
     content = await upload.read(MAX_CUSTOM_AUDIO_BYTES + 1)
     if len(content) > MAX_CUSTOM_AUDIO_BYTES:
         return f"{kind.title()} audio was not saved: files must be 10 MB or smaller."
+    if not audio_content_matches_extension(content, extension):
+        return f"{kind.title()} audio was not saved: the file contents are not valid {extension[1:].upper()} audio."
 
     os.makedirs(STATIC_AUDIO_DIR, exist_ok=True)
     filename = f"custom-{kind}{extension}"
@@ -788,6 +807,19 @@ async def save_custom_audio(kind: str, upload: UploadFile | None) -> str | None:
         audio_file.write(content)
     db.set_setting(f"audio_{kind}_file", filename)
     return f"Saved custom {kind} audio."
+
+
+def audio_content_matches_extension(content: bytes, extension: str) -> bool:
+    """Check the stable container signature before serving an uploaded audio file."""
+    if extension == ".wav":
+        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WAVE"
+    if extension == ".ogg":
+        return content.startswith(b"OggS")
+    if extension == ".mp3":
+        return content.startswith(b"ID3") or (
+            len(content) >= 2 and content[0] == 0xFF and content[1] & 0xE0 == 0xE0
+        )
+    return False
 
 
 def cache_is_stale(refreshed_at: str | None, ttl: timedelta) -> bool:
@@ -1365,8 +1397,8 @@ async def process_achievement_unlocks_for_user(username: str, recent_minutes: in
     ]
     for activity in current_week_activities:
         if not db.apply_achievement_to_weekly_ranking(username, week_start.isoformat(), activity):
-            # A missing/legacy cache row cannot be incremented safely because the
-            # polling lookback may not contain every unlock from the current week.
+            # The polling lookback may omit current-week unlocks, so a row
+            # without a complete weekly baseline must be refreshed in full.
             await refresh_weekly_ranking_for_user(username, week_start, week_end)
             break
 
@@ -1686,6 +1718,8 @@ async def onboarding_hub(hub_address: str = Form(...)):
 @app.post("/onboarding/api-key")
 async def onboarding_api_key(api_key: str = Form("")):
     submitted_key = api_key.strip()
+    if len(submitted_key) > MAX_API_KEY_LENGTH:
+        return onboarding_redirect(2, "That API key is too long.", "error")
     candidate = submitted_key or configured_ra_api_key()
     if not candidate:
         return onboarding_redirect(2, "Enter your RetroAchievements Web API key to continue.", "error")
@@ -2603,12 +2637,6 @@ async def windows_notification_status():
 
 @app.post("/api/update/install", status_code=202)
 async def install_application_update(request: Request):
-    origin = request.headers.get("origin")
-    expected_origin = str(request.base_url).rstrip("/")
-    if origin and origin.rstrip("/") != expected_origin:
-        raise HTTPException(status_code=403, detail="Cross-origin update requests are not allowed.")
-    if request.headers.get("sec-fetch-site") == "cross-site":
-        raise HTTPException(status_code=403, detail="Cross-site update requests are not allowed.")
     try:
         state = await application_updater.install()
         broadcast_display_update_state(state)
@@ -3062,6 +3090,8 @@ async def update_ra_api_key(api_key: str = Form(...)):
     api_key = api_key.strip()
     if not api_key:
         return admin_redirect("RetroAchievements API key was not changed: enter a key first.")
+    if len(api_key) > MAX_API_KEY_LENGTH:
+        return admin_redirect("RetroAchievements API key was not changed: that value is too long.")
 
     if not await validate_ra_api_key(api_key):
         return admin_redirect("That API key could not connect. Your current key was not changed.")

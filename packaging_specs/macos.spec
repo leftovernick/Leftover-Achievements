@@ -19,6 +19,8 @@ a = Analysis(
         (str(project_root / "templates"), "templates"),
         (str(project_root / "static"), "static"),
         (str(project_root / "scripts" / "update-macos.sh"), "scripts"),
+        (str(project_root / "LICENSE.md"), "."),
+        (str(project_root / "THIRD_PARTY_NOTICES.md"), "."),
         (version_file, "."),
         (architecture_file, "."),
     ],

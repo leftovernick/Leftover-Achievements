@@ -78,6 +78,38 @@
   window.addEventListener("resize", updateCanvasScale, { passive: true });
   window.visualViewport?.addEventListener("resize", updateCanvasScale, { passive: true });
 
+  const renderedLineCount = (element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const lineTops = [];
+    Array.from(range.getClientRects()).forEach((rect) => {
+      if (rect.width <= 0 || rect.height <= 0) return;
+      if (!lineTops.some((top) => Math.abs(top - rect.top) < 1)) lineTops.push(rect.top);
+    });
+    return lineTops.length;
+  };
+
+  const compactWrappedLeaders = (root = document) => {
+    Array.from(root.querySelectorAll("[data-recap-leaders]")).forEach((row) => {
+      const values = Array.from(row.querySelectorAll("[data-recap-leader-value]"));
+      row.classList.remove("recap-leaders--compact");
+      values.forEach((value) => value.classList.remove("recap-leader-value--wrapped"));
+      const wrapped = values.filter((value) => renderedLineCount(value) > 1);
+      if (!wrapped.length) return;
+      row.classList.add("recap-leaders--compact");
+      wrapped.forEach((value) => value.classList.add("recap-leader-value--wrapped"));
+    });
+  };
+
+  let leaderMeasureFrame;
+  const scheduleLeaderMeasurement = () => {
+    cancelAnimationFrame(leaderMeasureFrame);
+    leaderMeasureFrame = requestAnimationFrame(() => compactWrappedLeaders());
+  };
+  window.addEventListener("resize", scheduleLeaderMeasurement, { passive: true });
+  window.visualViewport?.addEventListener("resize", scheduleLeaderMeasurement, { passive: true });
+  document.fonts?.ready.then(scheduleLeaderMeasurement);
+
   const recapHero = document.querySelector(".recap-layout .recap-art__hero");
   const classifyRecapCover = () => {
     if (!recapHero?.naturalWidth || !recapHero.naturalHeight) return;
@@ -260,6 +292,7 @@
       }
     }));
     await document.fonts?.ready;
+    compactWrappedLeaders(stage);
     lockCoverAspectRatio(recap);
     if (recap) {
       const frame = clone.querySelector(".wrapped-card__frame");
@@ -328,6 +361,7 @@
   exportButtons.forEach((button) => button.addEventListener("click", () => exportRecap(button)));
 
   updateCanvasScale();
+  scheduleLeaderMeasurement();
   const initialCardType = document.body.dataset.initialCardType;
   const initialCardIndex = initialCardType
     ? cards.findIndex((card) => card.dataset.cardType === initialCardType)

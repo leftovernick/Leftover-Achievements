@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Recovery-only helper for releases that previously changed Raspberry Pi boot
-# files. Normal installs and updates must never call this script.
+# Recovery helper that restores Raspberry Pi boot files from the managed backup.
+# Normal installs and updates must never call this script.
 CONFIG_BEGIN="# BEGIN LeftoverAchievements appliance boot"
 CONFIG_END="# END LeftoverAchievements appliance boot"
 LEGACY_CONFIG_BEGIN="# BEGIN LeftoverAchievements boot branding"
@@ -86,21 +86,21 @@ restore_cmdline() {
 
   for token in $(tr '\r\n' ' ' < "$source"); do
     if is_known_la_token "$token"; then
-      # Preserve a matching token if the one-time pre-install backup proves it
-      # existed before LeftoverAchievements managed this file.
+      # Preserve a matching token when the pre-install backup proves it belongs
+      # to the host configuration.
       if [[ -f "$backup" ]] && has_exact_token "$backup" "$token"; then
         output+=" $token"
       fi
     elif [[ "$token" == quiet && -f "$backup" ]] && ! has_exact_token "$backup" quiet; then
-      # The reliability-first black-boot release added quiet on some systems.
+      # Remove a managed quiet token when the host backup does not contain it.
       :
     else
       output+=" $token"
     fi
   done
 
-  # Re-add standard tokens that an older LeftoverAchievements installer removed,
-  # but only when its own pre-install backup proves they were originally present.
+  # Restore standard tokens recorded in the pre-install backup when the current
+  # command line no longer contains them.
   if [[ -f "$backup" ]]; then
     for token in console=tty1 quiet splash; do
       if has_exact_token "$backup" "$token" && [[ " $output " != *" $token "* ]]; then

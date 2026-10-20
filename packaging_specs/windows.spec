@@ -17,6 +17,8 @@ a = Analysis(
     datas=[
         (str(project_root / "templates"), "templates"),
         (str(project_root / "static"), "static"),
+        (str(project_root / "LICENSE.md"), "."),
+        (str(project_root / "THIRD_PARTY_NOTICES.md"), "."),
         (version_file, "."),
     ],
     hiddenimports=collect_submodules("uvicorn") + ["webview.platforms.winforms", "pystray._win32"],

@@ -23,7 +23,8 @@ ARCHIVE="$RELEASE_DIR/$ARTIFACT.tar.gz"
 trap 'rm -rf "$STAGING_ROOT"' EXIT
 
 mkdir -p "$PACKAGE_ROOT" "$RELEASE_DIR"
-for file in app.py instance_config.py launcher.py runtime.py requirements.txt README.md .env.example; do
+for file in app.py instance_config.py launcher.py runtime.py security.py requirements.txt \
+  README.md LICENSE.md THIRD_PARTY_NOTICES.md .env.example; do
   install -m 0644 "$PROJECT_ROOT/$file" "$PACKAGE_ROOT/$file"
 done
 copy_runtime_tree() {

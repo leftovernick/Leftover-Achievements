@@ -42,11 +42,10 @@ def month_ranges(joined, now):
 
 
 def daily_points(achievements, start, end, calendar_timezone=None):
-    """Aggregate unlocks without changing the legacy Hardcore-only chart totals.
+    """Aggregate unlocks while keeping the all-time chart Hardcore-only.
 
-    Mode-tagged unlock facts are retained for Wrapped. A later Wrapped pass can
-    then collapse a Casual/Softcore unlock followed by its Hardcore upgrade
-    without inflating the annual achievement count.
+    Mode-tagged unlock facts let Wrapped collapse a Casual/Softcore unlock
+    followed by its Hardcore upgrade without inflating the annual count.
     """
     days = {}
     seen = set()
@@ -125,8 +124,8 @@ def first_score_point(rows, as_of):
         first = min(parts, key=lambda values: parse_date(values["first_achievement_at"]))
         return {"date": first["first_achievement_at"], "hardcore_points": first["first_hardcore_points"],
                 "retro_points": first["first_retro_points"]}
-    # Older caches retain daily totals, not exact unlock times. Start at the
-    # first scoring day; this is a daily aggregate, not an exact unlock timestamp.
+    # Rows without unlock-level facts begin on their first scoring day because
+    # their daily aggregate cannot identify an exact first-unlock timestamp.
     start_of_day = datetime.combine(datetime.fromisoformat(day).date(), time.min).astimezone().astimezone(timezone.utc)
     return {"date": min(start_of_day, parse_date(as_of)).isoformat(),
             **{field: sum(values[field] for values in parts) for field in ("hardcore_points", "retro_points")}}
@@ -316,7 +315,7 @@ class AllTimeCharts:
                     complete = False
                     break  # Missing data is never treated as zero or interpolated.
                 if end < now and parse_date(row["covered_through"]) < end:
-                    complete = False  # A formerly current month must be finished first.
+                    complete = False  # A past month is usable only when fully covered.
                     break
                 for field in cumulative:
                     cumulative[field] += row[field]

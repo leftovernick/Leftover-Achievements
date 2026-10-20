@@ -65,6 +65,8 @@ class InstanceConfig:
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            if os.name != "nt":
+                temporary.chmod(0o600)
             os.replace(temporary, self.path)
         finally:
             try:

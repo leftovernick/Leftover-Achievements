@@ -3,6 +3,7 @@ import sqlite3
 import tarfile
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from scripts.pi_package import (
@@ -94,26 +95,26 @@ class RaspberryPiPackageTests(unittest.TestCase):
         (legacy / "database").mkdir(parents=True)
         (legacy / "static/audio").mkdir(parents=True)
         (legacy / ".env").write_text("RA_API_KEY=secret\n", encoding="utf-8")
-        with sqlite3.connect(legacy / "database/leftover.db") as connection:
+        with closing(sqlite3.connect(legacy / "database/leftover.db")) as connection, connection:
             connection.execute(
                 "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
             )
         (legacy / "static/audio/custom-mastery.mp3").write_bytes(b"audio")
         migrate_legacy_data(legacy, data)
         self.assertEqual((data / ".env").read_text(), "RA_API_KEY=secret\n")
-        with sqlite3.connect(data / "leftover.db") as connection:
+        with closing(sqlite3.connect(data / "leftover.db")) as connection, connection:
             key = connection.execute(
                 "SELECT value FROM app_settings WHERE key='ra_api_key'"
             ).fetchone()[0]
         self.assertEqual(key, "secret")
         self.assertEqual((data / "audio/custom-mastery.mp3").read_bytes(), b"audio")
 
-        with sqlite3.connect(data / "leftover.db") as connection:
+        with closing(sqlite3.connect(data / "leftover.db")) as connection, connection:
             connection.execute(
                 "UPDATE app_settings SET value='new-key' WHERE key='ra_api_key'"
             )
         migrate_legacy_data(legacy, data)
-        with sqlite3.connect(data / "leftover.db") as connection:
+        with closing(sqlite3.connect(data / "leftover.db")) as connection, connection:
             preserved = connection.execute(
                 "SELECT value FROM app_settings WHERE key='ra_api_key'"
             ).fetchone()[0]
